@@ -29,8 +29,11 @@ jobs:
         include:
           - runner: macos-14
             arch_label: AppleSilicon
-          - runner: macos-13
-            arch_label: Intel
+          # TODO: re-enable Intel build once GitHub's free macos-13 runner
+          # pool has reasonable queue times. Currently jobs sit queued for
+          # 7+ hours. macos-13-large is a paid runner alternative.
+          # - runner: macos-13
+          #   arch_label: Intel
     runs-on: ${{ matrix.runner }}
 
     env:
