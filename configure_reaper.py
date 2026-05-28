@@ -834,6 +834,19 @@ class DigicoTab(ttk.Frame):
         if ext == ".ses":
             self.ses_path = p
             self.ses_var.set(p.name)
+            # If no RTF has been dropped, look for a sibling .rtf with the same
+            # basename or any .rtf in the same folder.
+            if self.rtf_path is None:
+                sibling = p.with_suffix(".rtf")
+                if sibling.exists():
+                    self.rtf_path = sibling
+                    self.rtf_var.set(f"{sibling.name}  (auto-detected)")
+                else:
+                    # Fallback: any single .rtf in the same folder
+                    rtfs = list(p.parent.glob("*.rtf"))
+                    if len(rtfs) == 1:
+                        self.rtf_path = rtfs[0]
+                        self.rtf_var.set(f"{rtfs[0].name}  (auto-detected)")
             self._update_status_after_drop()
         elif ext == ".rtf":
             self.rtf_path = p
@@ -866,10 +879,15 @@ class DigicoTab(ttk.Frame):
             self.status_var.set(f"Error reading {self.ses_path.name}: {e}")
             self.convert_btn.config(state="disabled")
             return
-        if was_fuzzy:
-            self.status_var.set(f'Ready. Will use preset "{matched_name}" (fuzzy match).')
-        else:
-            self.status_var.set(f'Ready. Found preset "{matched_name}".')
+        msg = (f'Ready. Will use preset "{matched_name}"'
+               + (' (fuzzy match).' if was_fuzzy else '.'))
+        if self.rtf_path is None:
+            msg += (
+                '\n⚠  No .rtf report dropped — tracks will be named after input '
+                'ports (e.g. "7:Mic 1") rather than channel strips (e.g. "KICK").\n'
+                '   Drop the session report .rtf for friendly names.'
+            )
+        self.status_var.set(msg)
         self.convert_btn.config(state="normal")
 
     def _clear(self):
