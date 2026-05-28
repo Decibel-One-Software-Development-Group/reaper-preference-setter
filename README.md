@@ -42,7 +42,7 @@ Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R
 
 ## Download
 
-Go to the [Releases page](https://github.com/nomismatt/reaper-preference-setter/releases) and download for your platform:
+Go to the [Releases page](https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases) and download for your platform:
 
 - **REAPER-Preference-Setter-macOS.dmg** — macOS (signed and notarized)
 - **REAPER-Preference-Setter.exe** — Windows
