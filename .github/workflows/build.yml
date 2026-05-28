@@ -33,7 +33,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: pip install pyinstaller tkinterdnd2
 
       - name: Build .app with PyInstaller
         run: |
@@ -41,6 +41,7 @@ jobs:
             --name "REAPER Preference Setter" \
             --icon icon.icns \
             --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
+            --collect-all tkinterdnd2 \
             configure_reaper.py
 
       - name: Import Apple Certificate
@@ -137,10 +138,10 @@ jobs:
           python-version: '3.12'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: pip install pyinstaller tkinterdnd2
 
       - name: Build executable
-        run: pyinstaller --windowed --onefile --name "REAPER-Preference-Setter" --icon icon.ico configure_reaper.py
+        run: pyinstaller --windowed --onefile --name "REAPER-Preference-Setter" --icon icon.ico --collect-all tkinterdnd2 configure_reaper.py
 
       - name: Zip exe with README
         run: Compress-Archive -Path "dist/REAPER-Preference-Setter.exe", "README.md" -DestinationPath "REAPER-Preference-Setter-Windows.zip"
