@@ -23,7 +23,18 @@ jobs:
 
   build_macos:
     needs: create_release
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch_label: AppleSilicon
+          - runner: macos-13
+            arch_label: Intel
+    runs-on: ${{ matrix.runner }}
+
+    env:
+      DMG: REAPER-Preference-Setter-macOS-${{ matrix.arch_label }}.dmg
 
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +103,7 @@ jobs:
             --window-size 600 400 \
             --app-drop-link 450 185 \
             --hide-extension "REAPER Preference Setter.app" \
-            "REAPER-Preference-Setter-macOS.dmg" \
+            "${DMG}" \
             "dist/REAPER Preference Setter.app"
           do
             if [ $i -eq $max_tries ]; then
@@ -100,7 +111,7 @@ jobs:
               hdiutil create -volname "REAPER Preference Setter" \
                 -srcfolder "dist/REAPER Preference Setter.app" \
                 -ov -format UDZO \
-                "REAPER-Preference-Setter-macOS.dmg"
+                "${DMG}"
               break
             fi
             i=$((i+1))
@@ -108,7 +119,7 @@ jobs:
 
       - name: Notarize DMG
         run: |
-          xcrun notarytool submit "REAPER-Preference-Setter-macOS.dmg" \
+          xcrun notarytool submit "${DMG}" \
             --apple-id "${{ secrets.APPLE_DEVELOPER_ID_USER }}" \
             --password "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
             --team-id "${{ secrets.APPLE_DEVELOPER_ID_TEAM }}" \
@@ -116,15 +127,15 @@ jobs:
 
       - name: Staple DMG
         run: |
-          xcrun stapler staple "REAPER-Preference-Setter-macOS.dmg"
-          xcrun stapler validate "REAPER-Preference-Setter-macOS.dmg"
+          xcrun stapler staple "${DMG}"
+          xcrun stapler validate "${DMG}"
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
-            REAPER-Preference-Setter-macOS.dmg
+            ${{ env.DMG }}
 
   build_windows:
     needs: create_release
