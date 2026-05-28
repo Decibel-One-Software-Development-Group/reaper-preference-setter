@@ -1,8 +1,15 @@
 # REAPER Preference Setter
 
-A simple app to configure REAPER DAW preferences on any machine. Useful for touring, studio setups, or maintaining consistent settings across multiple installs.
+A simple app to configure REAPER DAW preferences on any machine, and to generate Reaper track-name CSVs from DiGiCo SDQ session files. Useful for touring, studio setups, or maintaining consistent settings across multiple installs.
 
-## What it configures
+The app has two tabs:
+
+- **Preferences** — set up REAPER preferences (startup, save paths, template, peaks)
+- **DiGiCo → Reaper CSV** — drag and drop a `.ses` from your DiGiCo console to generate a Reaper track-name CSV
+
+## Preferences tab
+
+What it configures:
 
 - **Startup behavior** — Opens a new project on launch (instead of loading the last project)
 - **Project template** — Sets a default `.RPP` template for new projects
@@ -10,6 +17,28 @@ A simple app to configure REAPER DAW preferences on any machine. Useful for tour
 - **Default save path** — Sets where new projects are saved
 - **Media path** — Sets the relative media recording folder (e.g., `Audio`)
 - **Peak files** — Stores `.reapeaks` in a `peaks/` subfolder relative to media
+
+## DiGiCo → Reaper CSV tab
+
+Generate a single-column track-name CSV ready for the [J&T Live Recording Template](https://www.jandtaudiosolutions.com/) PATCH IMPORT button — names and patches your Reaper tracks to match the Copy Audio routing from your DiGiCo SDQ console.
+
+### On the console (one-time prep)
+
+1. Open the **Copy Audio** screen
+2. Patch each console input you want to record to a Reaper card (Waves) output, in the order you want the tracks in Reaper
+3. Click **presets** → **Save** and name the preset exactly: `Extract for Reaper`
+4. Save the session, then export the `.ses` file to your computer (USB stick, share, etc.)
+
+Optionally also export the session report as `.rtf` (Console menu → Files → Session Report). Without it, Reaper tracks are named after the input port (`7:Mic 1`) instead of the channel-strip name (`KICK`).
+
+### In the app
+
+1. Switch to the **DiGiCo → Reaper CSV** tab
+2. Drag the `.ses` (and optionally `.rtf`) onto the drop zone — or click to browse
+3. Click **Convert → CSV** and choose where to save
+4. In Reaper with the J&T template loaded, click **PATCH IMPORT** and select the CSV
+
+Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R` rows automatically, provided your Copy Audio sends each side to consecutive outputs.
 
 ## Download
 
@@ -32,23 +61,19 @@ No Python installation required.
 2. If SmartScreen shows a warning, click **More info** > **Run anyway**
 3. This only happens once
 
-## What happens when you run it
-
-1. A window opens showing your current REAPER settings
-2. Set your preferred project save path, template, and media folder
-3. Toggle checkboxes for startup behavior, save prompts, and peak file organization
-4. Click **Apply** — a backup of `reaper.ini` is created automatically
-5. Launch REAPER to verify
-
 ## Alternative: run from source
 
 If you have Python 3.6+ with tkinter:
 
 ```bash
+pip install tkinterdnd2          # optional, enables drag-and-drop
 python3 configure_reaper.py
 ```
 
+Without `tkinterdnd2`, the DiGiCo tab still works — just click the drop zone to browse for files instead of dragging.
+
 ## Requirements
 
-- REAPER should be **closed** before applying changes (the app will warn you if it's open)
+- REAPER should be **closed** before applying preferences (the app will warn you if it's open)
+- DiGiCo session files must be from an **SDQ-family** console (SD7Q, SD12Q, etc.). SD7 / SD8 / SD9 sessions use a different file format and aren't supported yet.
 - macOS 10.15+ or Windows 10+
