@@ -29,7 +29,7 @@ Generate a single-column track-name CSV ready for the [J&T Live Recording Templa
 3. Click **presets** → **Save** and name the preset exactly: `Extract for Reaper`
 4. Save the session, then export the `.ses` file to your computer (USB stick, share, etc.)
 
-Optionally also export the session report as `.rtf` (Console menu → Files → Session Report). Without it, Reaper tracks are named after the input port (`7:Mic 1`) instead of the channel-strip name (`KICK`).
+Channel-strip names, stereo flags, and current input routes are all read directly from the `.ses` — no separate session report needed.
 
 ### In the app
 

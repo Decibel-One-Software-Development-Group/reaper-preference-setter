@@ -152,6 +152,18 @@ def check_reaper_running():
 PRESET_NAME = b"Extract for Reaper"
 PORT_RECORD_SIZE_BYTES = (0x79, 0x50, 0x80, 0x60, 0x40)
 
+# Channel-strip record header: `da 00 3a 00` marker + 4-byte type, where type=1
+# is a channel-strip snapshot. Each block contains the strip name (length-prefixed)
+# followed by data including the live input-route field, encoded as
+# `(input_port_pid u16 LE)(00 01)` somewhere in the first ~250 bytes after the name.
+# Sessions store multiple snapshots; the most recent one (last in file order)
+# reflects the live state.
+STRIP_BLOCK_HEADER = bytes.fromhex("da003a0001000000")
+INPUT_PORT_NAME_PREFIXES = (
+    "6:Dnt64", "7:Mic", "0:Mic/Lin", "0:AES in",
+    "1:MADI", "2:MADI", "3:MADI", "4:MADI", "talk mic",
+)
+
 # Minimum similarity (0..1) for a fuzzy preset-name match to be accepted.
 # 1.0 = exact (after lowercasing). 0.5 catches "Export for Reaper",
 # "Extract to Reaper", "Reaper Extract", etc. Below this we ask the user
@@ -190,6 +202,91 @@ def _parse_port_records(data):
                 # for input/output directions; either is fine for naming).
                 ports.setdefault(pid_lo, name)
     return ports
+
+
+def _extract_strips_from_ses(data, ports):
+    """Extract channel-strip info (name, stereo flag, input route) from a .ses.
+
+    Channel-strip port records live in pid_lo range 0x0100-0x01FF. Each has a
+    stereo flag at +41 of its `cb 00 79 00` record (0x01 = mono, 0x02 = stereo).
+
+    The strip's live input route is encoded inside per-strip snapshot blocks
+    headed by `da 00 3a 00 01 00 00 00` + length-prefixed name. Inside the
+    block, the route field is the first `(input_port_pid u16 LE)(00 01)` marker
+    within ~250 bytes. The file holds multiple snapshots; the LAST occurrence
+    is the live state.
+
+    Returns list of (strip_name, is_stereo, input_route_name) where any field
+    may be empty if not found.
+    """
+    input_pids = {
+        pid for pid, name in ports.items()
+        if any(name.startswith(p) for p in INPUT_PORT_NAME_PREFIXES)
+    }
+
+    # Find all channel-strip port records (with their stereo flag).
+    strips = []  # (pid_lo, name, is_stereo)
+    for sig_byte in PORT_RECORD_SIZE_BYTES:
+        sig = bytes([0xCB, 0x00, sig_byte, 0x00])
+        i = 0
+        seen_pids = set()
+        while True:
+            j = data.find(sig, i)
+            if j < 0:
+                break
+            i = j + 1
+            if j + 50 > len(data):
+                continue
+            pid_lo = struct.unpack("<H", data[j + 4:j + 6])[0]
+            if not (0x0100 <= pid_lo < 0x0200):
+                continue
+            if pid_lo in seen_pids:
+                continue
+            name_len = data[j + 8]
+            if name_len == 0 or name_len > 30:
+                continue
+            raw = data[j + 9:j + 9 + name_len]
+            try:
+                name = raw.decode("latin-1").rstrip("\x00")
+            except Exception:
+                continue
+            if not (name and all(c.isprintable() for c in name)):
+                continue
+            stereo_flag = data[j + 41]
+            is_stereo = stereo_flag == 0x02
+            strips.append((pid_lo, name, is_stereo))
+            seen_pids.add(pid_lo)
+
+    # For each strip, find its current input route by scanning per-strip snapshot
+    # blocks. Last occurrence wins.
+    out = []
+    for pid_lo, name, is_stereo in strips:
+        try:
+            name_b = name.encode("latin-1")
+        except UnicodeEncodeError:
+            out.append((name, is_stereo, ""))
+            continue
+        needle = STRIP_BLOCK_HEADER + bytes([len(name_b)]) + name_b
+        last_route = ""
+        i = 0
+        while True:
+            j = data.find(needle, i)
+            if j < 0:
+                break
+            i = j + 1
+            name_end = j + 9 + len(name_b)
+            for delta in range(0, 250):
+                off = name_end + delta
+                if off + 4 > len(data):
+                    break
+                if data[off + 2:off + 4] != b"\x00\x01":
+                    continue
+                pid = struct.unpack("<H", data[off:off + 2])[0]
+                if pid in input_pids:
+                    last_route = ports[pid]
+                    break
+        out.append((name, is_stereo, last_route))
+    return out
 
 
 def _parse_rtf_strips(rtf_text):
@@ -439,8 +536,41 @@ def parse_digico_session(ses_path, rtf_path=None):
     if not raw_routings:
         raise DigicoError("Found the preset, but it contains no routings.")
 
-    strips = _parse_rtf_strips(open(rtf_path).read()) if rtf_path else []
-    port_to_label = _strip_label_map(strips)
+    # Primary path: extract strip names + input routes directly from the .ses
+    ses_strips = _extract_strips_from_ses(data, ports)
+    port_to_label = {}
+    for name, is_stereo, route in ses_strips:
+        if not (name and route):
+            continue
+        if is_stereo:
+            port_to_label[route] = (name, ".L")
+            m = re.match(r"^(.*?)(\d+)$", route)
+            if m:
+                prefix, idx = m.group(1), int(m.group(2))
+                port_to_label[f"{prefix}{idx + 1}"] = (name, ".R")
+        else:
+            port_to_label[route] = (name, "")
+
+    # Optional fallback: if an RTF is provided, fill in any strips the .ses
+    # extraction missed (rare, but helps if a strip has no current snapshot).
+    if rtf_path:
+        try:
+            with open(rtf_path) as f:
+                rtf_strips = _parse_rtf_strips(f.read())
+        except Exception:
+            rtf_strips = []
+        for _, name, stereo, route in rtf_strips:
+            if not (name and route) or route in port_to_label:
+                continue
+            if stereo:
+                port_to_label[route] = (name, ".L")
+                m = re.match(r"^(.*?)(\d+)$", route)
+                if m:
+                    prefix, idx = m.group(1), int(m.group(2))
+                    next_port = f"{prefix}{idx + 1}"
+                    port_to_label.setdefault(next_port, (name, ".R"))
+            else:
+                port_to_label[route] = (name, "")
 
     # Build a column → label map, then flatten to a list with gap-fill
     rows_by_col = {}
@@ -454,10 +584,8 @@ def parse_digico_session(ses_path, rtf_path=None):
             name, suffix = port_to_label[src_name]
             label = name + suffix
         else:
-            # Either no RTF was provided, or this port doesn't map to a named strip
             label = src_name
-            if strips:  # RTF was given but the port wasn't found
-                unnamed.append(src_name)
+            unnamed.append(src_name)
         rows_by_col[col] = label
 
     if not rows_by_col:
@@ -474,6 +602,8 @@ def parse_digico_session(ses_path, rtf_path=None):
         "waves_base": f"0x{waves_base:04x}",
         "matched_name": matched_name,
         "was_fuzzy": was_fuzzy,
+        "ses_strips_routed": sum(1 for _, _, r in ses_strips if r),
+        "ses_strips_total": len(ses_strips),
     }
     return rows, info
 
@@ -725,9 +855,8 @@ class DigicoTab(ttk.Frame):
             "   1. Open the Copy Audio screen and set up your routing\n"
             "   2. Save it as a preset named exactly:  Extract for Reaper\n"
             "   3. Save the session, then export the .ses file\n\n"
-            "Drop the .ses below. Optionally drop the .rtf session report too —\n"
-            "without it, tracks are named after the input port (e.g. \"7:Mic 1\")\n"
-            "instead of the channel-strip name (e.g. \"KICK\")."
+            "Drop the .ses below. Channel-strip names and stereo flags are read\n"
+            "directly from the session — no .rtf report needed."
         )
         ttk.Label(self, text=instructions, justify="left").grid(
             row=row, column=0, sticky="w", pady=(0, 15))
@@ -881,12 +1010,6 @@ class DigicoTab(ttk.Frame):
             return
         msg = (f'Ready. Will use preset "{matched_name}"'
                + (' (fuzzy match).' if was_fuzzy else '.'))
-        if self.rtf_path is None:
-            msg += (
-                '\n⚠  No .rtf report dropped — tracks will be named after input '
-                'ports (e.g. "7:Mic 1") rather than channel strips (e.g. "KICK").\n'
-                '   Drop the session report .rtf for friendly names.'
-            )
         self.status_var.set(msg)
         self.convert_btn.config(state="normal")
 
