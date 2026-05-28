@@ -23,18 +23,19 @@ jobs:
 
   build_macos:
     needs: create_release
+    # Both architectures build on macos-14 — Intel build cross-compiles via
+    # Rosetta 2 + arch -x86_64. This keeps everything on the plentiful Apple
+    # Silicon runner pool. macos-13 (Intel) runners have multi-hour free-tier
+    # queue times. Same pattern used by simchronize-server.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - arch: arm64
             arch_label: AppleSilicon
-          # TODO: re-enable Intel build once GitHub's free macos-13 runner
-          # pool has reasonable queue times. Currently jobs sit queued for
-          # 7+ hours. macos-13-large is a paid runner alternative.
-          # - runner: macos-13
-          #   arch_label: Intel
-    runs-on: ${{ matrix.runner }}
+          - arch: x86_64
+            arch_label: Intel
+    runs-on: macos-14
 
     env:
       DMG: REAPER-Preference-Setter-macOS-${{ matrix.arch_label }}.dmg
@@ -47,16 +48,32 @@ jobs:
           python-version: '3.12'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller tkinterdnd2
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            arch -x86_64 python3 -m pip install pyinstaller tkinterdnd2
+          else
+            pip install pyinstaller tkinterdnd2
+          fi
 
       - name: Build .app with PyInstaller
         run: |
-          pyinstaller --windowed --onedir \
-            --name "REAPER Preference Setter" \
-            --icon icon.icns \
-            --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
-            --collect-all tkinterdnd2 \
-            configure_reaper.py
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            arch -x86_64 python3 -m PyInstaller --windowed --onedir \
+              --name "REAPER Preference Setter" \
+              --icon icon.icns \
+              --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
+              --collect-all tkinterdnd2 \
+              --target-architecture x86_64 \
+              configure_reaper.py
+          else
+            pyinstaller --windowed --onedir \
+              --name "REAPER Preference Setter" \
+              --icon icon.icns \
+              --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
+              --collect-all tkinterdnd2 \
+              --target-architecture arm64 \
+              configure_reaper.py
+          fi
 
       - name: Import Apple Certificate
         run: |

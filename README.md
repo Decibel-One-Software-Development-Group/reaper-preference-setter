@@ -45,9 +45,8 @@ Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R
 Go to the [Releases page](https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases) and download for your platform:
 
 - **REAPER-Preference-Setter-macOS-AppleSilicon.dmg** — macOS on M1/M2/M3/M4 (signed and notarized)
+- **REAPER-Preference-Setter-macOS-Intel.dmg** — macOS on Intel (signed and notarized)
 - **REAPER-Preference-Setter-Windows.zip** — Windows
-
-> Intel macOS build is coming in a follow-up release — currently blocked on GitHub's free Intel runner queue.
 
 No Python installation required.
 
