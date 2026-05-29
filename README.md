@@ -76,5 +76,5 @@ Without `tkinterdnd2`, the DiGiCo tab still works — just click the drop zone t
 ## Requirements
 
 - REAPER should be **closed** before applying preferences (the app will warn you if it's open)
-- DiGiCo session files must be from an **SDQ-family** console (SD7Q, SD12Q, etc.). SD7 / SD8 / SD9 sessions use a different file format and aren't supported yet.
+- DiGiCo session files must be from a **Quantum (SDQ) console running software v22 or later** (file format `vO`+). Older Quantum software, and SD7 / SD8 / SD9 consoles, use different file formats and aren't supported yet — the app detects this and tells you rather than producing wrong names.
 - macOS 10.15+ or Windows 10+

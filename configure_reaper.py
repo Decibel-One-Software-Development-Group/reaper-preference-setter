@@ -175,6 +175,41 @@ class DigicoError(Exception):
     """Raised when a DiGiCo session can't be parsed for Copy Audio export."""
 
 
+# Supported session format. The .ses header is:
+#   "DiGiCo     <MODEL> .SES v<LETTER>"
+# where MODEL is the console family (SDQ = Quantum) and LETTER is the file-format
+# version. This tool was reverse-engineered against SDQ "vO" (Quantum software
+# v22). Older format versions store routing differently and aren't supported.
+SUPPORTED_MODEL = "SDQ"
+MIN_FORMAT_VERSION = "O"
+
+
+def _check_supported_format(data):
+    """Raise DigicoError unless this is a supported SDQ vO+ session."""
+    if data[:6] != b"DiGiCo":
+        raise DigicoError(
+            "This doesn't look like a DiGiCo session file (.ses)."
+        )
+    model = data[11:14].decode("latin-1", "replace").strip()
+    idx = data.find(b".SES v")
+    ver = chr(data[idx + 6]) if (idx >= 0 and idx + 6 < len(data)) else "?"
+
+    if model != SUPPORTED_MODEL:
+        raise DigicoError(
+            f"Unsupported console: this is a '{model}' session.\n\n"
+            f"Only DiGiCo Quantum (SDQ) sessions are supported right now.\n"
+            f"Support for other consoles can be added later."
+        )
+    if not ("A" <= ver <= "Z") or ver < MIN_FORMAT_VERSION:
+        raise DigicoError(
+            f"Unsupported session version (file format 'v{ver}').\n\n"
+            f"Only Quantum software v22 and later (file format 'v{MIN_FORMAT_VERSION}'+) "
+            f"is supported.\n"
+            f"Re-save the session on a current Quantum, or ask for this version "
+            f"to be added."
+        )
+
+
 def _parse_port_records(data):
     """Return {port_id_lo: port_name} by scanning for `cb 00 ?? 00` signatures."""
     ports = {}
@@ -287,6 +322,52 @@ def _extract_strips_from_ses(data, ports):
                     break
         out.append((name, is_stereo, last_route))
     return out
+
+
+def _extract_output_patches_from_ses(data, ports, waves_base):
+    """Find output buses (matrix/aux/group) patched directly to Waves output
+    ports — e.g. a matrix output assigned to Waves 59. These aren't Copy Audio
+    routings, so they show up as gaps in the Copy Audio CSV; this fills them.
+
+    In a bus's snapshot block, parameter 0x0efe holds its output port pid as an
+    8-byte entry: `(fe 0e)(00 00 00 00)(port_pid u16 LE)`. When that port pid is
+    a Waves output (waves_base..waves_base+63), the bus feeds that Reaper track.
+
+    Returns dict {col (1-indexed) -> bus_name}, last snapshot wins.
+    """
+    PARAM_OUTPUT = struct.pack("<H", 0x0EFE)
+    hdr = bytes.fromhex("da003a00")
+    col_to_bus = {}  # col -> (name, file_offset)
+    i = 0
+    while True:
+        j = data.find(hdr, i)
+        if j < 0:
+            break
+        i = j + 1
+        if j + 9 > len(data):
+            break
+        name_len = data[j + 8]
+        if name_len == 0 or name_len > 30:
+            continue
+        raw = data[j + 9:j + 9 + name_len]
+        try:
+            name = raw.decode("latin-1").rstrip("\x00")
+        except Exception:
+            continue
+        if not (name and all(c.isprintable() for c in name)):
+            continue
+        name_end = j + 9 + name_len
+        region = data[name_end:name_end + 320]
+        k = region.find(PARAM_OUTPUT)
+        if k < 0 or k + 8 > len(region):
+            continue
+        port_pid = struct.unpack("<H", region[k + 6:k + 8])[0]
+        # Is it a Waves output port?
+        if waves_base <= port_pid <= waves_base + 63:
+            col = (port_pid - waves_base) + 1
+            if col not in col_to_bus or j > col_to_bus[col][1]:
+                col_to_bus[col] = (name, j)
+    return {col: name for col, (name, _) in col_to_bus.items()}
 
 
 def _parse_rtf_strips(rtf_text):
@@ -516,6 +597,7 @@ def parse_digico_session(ses_path, rtf_path=None):
     with open(ses_path, "rb") as f:
         data = f.read()
 
+    _check_supported_format(data)
     matched_name, table_start, was_fuzzy = _find_preset_table(data)
     ports = _parse_port_records(data)
 
@@ -591,6 +673,16 @@ def parse_digico_session(ses_path, rtf_path=None):
     if not rows_by_col:
         return [], {"count": 0, "max_col": 0}
 
+    # Fill any gaps with direct output-bus patches (e.g. a matrix output
+    # assigned straight to a Waves port — common for press/broadcast feeds).
+    # Only fills columns Copy Audio didn't claim, so it never overwrites.
+    output_patches = _extract_output_patches_from_ses(data, ports, waves_base)
+    patched_cols = []
+    for col, bus_name in output_patches.items():
+        if col not in rows_by_col:
+            rows_by_col[col] = bus_name
+            patched_cols.append(col)
+
     max_col = max(rows_by_col.keys())
     rows = [rows_by_col.get(c, "") for c in range(1, max_col + 1)]
 
@@ -604,6 +696,7 @@ def parse_digico_session(ses_path, rtf_path=None):
         "was_fuzzy": was_fuzzy,
         "ses_strips_routed": sum(1 for _, _, r in ses_strips if r),
         "ses_strips_total": len(ses_strips),
+        "output_patches": len(patched_cols),
     }
     return rows, info
 
@@ -862,9 +955,13 @@ class DigicoTab(ttk.Frame):
             row=row, column=0, sticky="w", pady=(0, 15))
         row += 1
 
-        # Drop zone
+        # Drop zone — light box with dark text for readable contrast on any theme
+        DROP_BG = "#e6e6e6"
+        DROP_FG = "#2b2b2b"
         self.drop_frame = tk.Frame(
-            self, bg="#ececec", relief="ridge", bd=2, height=110, width=560,
+            self, bg=DROP_BG, relief="solid", bd=1, height=110, width=560,
+            highlightbackground="#7a7a7a", highlightcolor="#7a7a7a",
+            highlightthickness=1,
         )
         self.drop_frame.grid(row=row, column=0, sticky="ew", pady=(0, 10))
         self.drop_frame.grid_propagate(False)
@@ -875,8 +972,8 @@ class DigicoTab(ttk.Frame):
             else "Click to browse for files\n\n(Drag-and-drop unavailable —\nrun `pip install tkinterdnd2` to enable)"
         )
         self.drop_label = tk.Label(
-            self.drop_frame, text=drop_text, bg="#ececec",
-            cursor="hand2", justify="center",
+            self.drop_frame, text=drop_text, bg=DROP_BG, fg=DROP_FG,
+            cursor="hand2", justify="center", font=("", 13),
         )
         self.drop_label.place(relx=0.5, rely=0.5, anchor="center")
         self.drop_label.bind("<Button-1>", lambda e: self._browse_files())
@@ -893,11 +990,11 @@ class DigicoTab(ttk.Frame):
         files_frame.grid(row=row, column=0, sticky="ew", pady=(0, 10))
         ttk.Label(files_frame, text="Session:").grid(row=0, column=0, sticky="w")
         self.ses_var = tk.StringVar(value="(none)")
-        ttk.Label(files_frame, textvariable=self.ses_var, foreground="#444").grid(
+        ttk.Label(files_frame, textvariable=self.ses_var).grid(
             row=0, column=1, sticky="w", padx=(8, 0))
         ttk.Label(files_frame, text="Report:").grid(row=1, column=0, sticky="w")
-        self.rtf_var = tk.StringVar(value="(none — port names will be used)")
-        ttk.Label(files_frame, textvariable=self.rtf_var, foreground="#444").grid(
+        self.rtf_var = tk.StringVar(value="(none — optional)")
+        ttk.Label(files_frame, textvariable=self.rtf_var).grid(
             row=1, column=1, sticky="w", padx=(8, 0))
         row += 1
 
@@ -992,10 +1089,11 @@ class DigicoTab(ttk.Frame):
             self.status_var.set("Drop a .ses file to begin.")
             self.convert_btn.config(state="disabled")
             return
-        # Peek at the .ses to verify a usable preset exists (exact or fuzzy match)
+        # Peek at the .ses to verify the format is supported and a preset exists
         try:
             with open(self.ses_path, "rb") as f:
                 data = f.read()
+            _check_supported_format(data)
             matched_name, _, was_fuzzy = _find_preset_table(data)
         except DigicoError as e:
             # Show only the first line of the error in the status; the full
@@ -1017,7 +1115,7 @@ class DigicoTab(ttk.Frame):
         self.ses_path = None
         self.rtf_path = None
         self.ses_var.set("(none)")
-        self.rtf_var.set("(none — port names will be used)")
+        self.rtf_var.set("(none — optional)")
         self.status_var.set("Drop a .ses file to begin.")
         self.convert_btn.config(state="disabled")
 
@@ -1094,7 +1192,7 @@ class App:
         notebook = ttk.Notebook(self.root)
         notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        notebook.add(PreferencesTab(notebook), text="Preferences")
+        notebook.add(PreferencesTab(notebook), text="Reaper Preferences")
         notebook.add(DigicoTab(notebook), text="DiGiCo → Reaper CSV")
 
     def run(self):
