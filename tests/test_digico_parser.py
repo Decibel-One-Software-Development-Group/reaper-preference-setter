@@ -232,6 +232,38 @@ class DigicoParserTests(unittest.TestCase):
         self.assertEqual(rows, ["Elsa DF", "Elsa BU"])
         self.assertEqual(info["unnamed"], ["S4-6 Elsa BU"])
 
+    def test_renamed_input_port_still_resolves(self):
+        """An input port renamed by the engineer matches no name pattern, but
+        the Copy Audio preset names it as a source — so it is one."""
+        data = build_session(
+            version=b"M", size_byte=0x58,
+            cards=[("Trks", 0x4F00, 1, 4)],
+            inputs=[(0x2630, "P.A Trk 1 L"), (0x2631, "P.A Trk 1 R")],
+            strips=[(0x0172, "Able Trk1", 0x2630, True)],
+            routings=[(0x2630, 0x4F01), (0x2631, 0x4F02)],
+        )
+        rows, info = parse(data, self.tmp)
+        self.assertEqual(rows, ["Able Trk1.L", "Able Trk1.R"])
+        self.assertEqual(info["unnamed"], [])
+
+    def test_lowest_numbered_strip_wins_a_shared_input(self):
+        """A tech-listen strip can share an input with the primary channel.
+        The lower channel number is the primary one, whatever order the
+        records happen to appear in the file."""
+        data = build_session(
+            version=b"M", size_byte=0x58,
+            cards=[("Trks", 0x4F00, 1, 4)],
+            inputs=[(0x2632, "P.A Trk 2 L")],
+            strips=[
+                (0x019A, "Tech L/R", 0x2632),    # higher channel, listed first
+                (0x0173, "Able Trk2", 0x2632),   # primary channel
+            ],
+            routings=[(0x2632, 0x4F01)],
+        )
+        rows, info = parse(data, self.tmp)
+        self.assertEqual(rows, ["Able Trk2"])
+        self.assertEqual(info["contested_inputs"], 1)
+
     def test_rejects_non_digico_and_non_quantum(self):
         with self.assertRaises(cr.DigicoError):
             parse(b"NOT A DIGICO FILE" + b"\x00" * 512, self.tmp)

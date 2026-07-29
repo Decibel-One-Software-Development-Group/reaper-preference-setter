@@ -289,7 +289,7 @@ def _parse_port_records(data):
     return ports
 
 
-def _extract_strips_from_ses(data, ports):
+def _extract_strips_from_ses(data, ports, preset_source_pids=None):
     """Extract channel-strip info (name, stereo flag, input route) from a .ses.
 
     Channel-strip port records live in pid_lo range 0x0100-0x01FF. Each has a
@@ -305,10 +305,21 @@ def _extract_strips_from_ses(data, ports):
     where any field may be empty/None if not found. The pid is what pairs a
     stereo strip with its right-hand port — see `parse_digico_session`.
     """
+    # Which ports count as a strip's input. Matching on name shape alone was
+    # still an allow-list: it knew rack inputs and stagebox sockets, but not
+    # ports an engineer has renamed outright ("P.A Trk 1 L", "KCmp 1"), so
+    # those strips resolved no route and their tracks fell back to raw port
+    # names. The Copy Audio preset names its sources explicitly, so anything it
+    # copies is by definition an input — plus each source's neighbour, which is
+    # the right-hand side of a stereo pair.
     input_pids = {
         pid for pid, name in ports.items()
         if INPUT_PORT_NAME_RE.match(name)
     }
+    for pid in preset_source_pids or ():
+        input_pids.add(pid)
+        if pid + 1 in ports:
+            input_pids.add(pid + 1)
 
     # Find all channel-strip port records (with their stereo flag).
     strips = []  # (pid_lo, name, is_stereo)
@@ -342,6 +353,13 @@ def _extract_strips_from_ses(data, ports):
             is_stereo = stereo_flag == 0x02
             strips.append((pid_lo, name, is_stereo))
             seen_pids.add(pid_lo)
+
+    # Several strips can legitimately share one input — a tech-listen or spare
+    # channel patched from the same source as the primary one. Resolve in
+    # channel order so the caller can let the lowest-numbered strip win, which
+    # is the primary channel by desk convention; otherwise the winner would
+    # depend on the order records happen to appear in the file.
+    strips.sort(key=lambda s: s[0])
 
     # For each strip, find its current input route by scanning per-strip snapshot
     # blocks. Last occurrence wins.
@@ -729,17 +747,24 @@ def parse_digico_session(ses_path, rtf_path=None):
     # produced no .R at all for named stagebox sockets like "S4-4 K1 L", which
     # left the right-hand track labelled with a raw port name. Both rules agree
     # wherever the name-based one applies.
-    ses_strips = _extract_strips_from_ses(data, ports)
+    ses_strips = _extract_strips_from_ses(
+        data, ports, preset_source_pids={s for s, _ in raw_routings}
+    )
+    # setdefault, over strips in channel order: the lowest-numbered strip that
+    # claims an input wins it.
     pid_to_label = {}
+    contested = 0
     for name, is_stereo, route, route_pid in ses_strips:
         if not (name and route) or route_pid is None:
             continue
-        if is_stereo:
-            pid_to_label[route_pid] = (name, ".L")
-            if route_pid + 1 in ports:
-                pid_to_label[route_pid + 1] = (name, ".R")
-        else:
-            pid_to_label[route_pid] = (name, "")
+        sides = [(route_pid, ".L" if is_stereo else "")]
+        if is_stereo and route_pid + 1 in ports:
+            sides.append((route_pid + 1, ".R"))
+        for pid, suffix in sides:
+            if pid in pid_to_label and pid_to_label[pid][0] != name:
+                contested += 1
+                continue
+            pid_to_label[pid] = (name, suffix)
 
     # RTF strips are keyed by route string — the report has no pids. Kept
     # name-based so the RTF path behaves exactly as before.
@@ -816,6 +841,7 @@ def parse_digico_session(ses_path, rtf_path=None):
         "matched_name": matched_name,
         "was_fuzzy": was_fuzzy,
         "ses_strips_routed": sum(1 for _, _, r, _pid in ses_strips if r),
+        "contested_inputs": contested,
         "ses_strips_total": len(ses_strips),
         "output_patches": len(patched_cols),
     }
