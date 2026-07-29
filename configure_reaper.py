@@ -150,7 +150,10 @@ def check_reaper_running():
 #   +9...: name (latin-1 chars)
 
 PRESET_NAME = b"Extract for Reaper"
-PORT_RECORD_SIZE_BYTES = (0x79, 0x50, 0x80, 0x60, 0x40)
+# 0x79 is what current Quantum software writes; 0x58 appears in older sessions
+# (file format 'vM'). The record layout is identical either way — only the
+# size code differs, so an unknown code means "no ports found", not bad data.
+PORT_RECORD_SIZE_BYTES = (0x79, 0x58, 0x50, 0x80, 0x60, 0x40)
 
 # Channel-strip record header: `da 00 3a 00` marker + 4-byte type, where type=1
 # is a channel-strip snapshot. Each block contains the strip name (length-prefixed)
@@ -159,9 +162,19 @@ PORT_RECORD_SIZE_BYTES = (0x79, 0x50, 0x80, 0x60, 0x40)
 # Sessions store multiple snapshots; the most recent one (last in file order)
 # reflects the live state.
 STRIP_BLOCK_HEADER = bytes.fromhex("da003a0001000000")
-INPUT_PORT_NAME_PREFIXES = (
-    "6:Dnt64", "7:Mic", "0:Mic/Lin", "0:AES in",
-    "1:MADI", "2:MADI", "3:MADI", "4:MADI", "talk mic",
+# A strip's input route points at a physical input port. Port names vary by
+# console I/O fit and by how the engineer labelled the racks, so match on shape
+# rather than an allow-list of names:
+#   "<slot>:<type> <n>"  — rack inputs, e.g. "6:Dnt64 25", "13:MADI 7", "0:Mic/Lin 3"
+#   "S<rack>-<socket> …" — stagebox sockets, e.g. "S1-1 Elsa"
+# An allow-list missed "13:MADI" (only 1-4 were listed) and every stagebox name.
+INPUT_PORT_NAME_RE = re.compile(
+    r"""^(?:
+          \d+ \s* : \s* \w              # slot-prefixed rack input
+        | S \d+ - \d+ \b                # stagebox socket
+        | talk \s* mic                  # console talkback
+    )""",
+    re.IGNORECASE | re.VERBOSE,
 )
 
 # Minimum similarity (0..1) for a fuzzy preset-name match to be accepted.
@@ -169,6 +182,10 @@ INPUT_PORT_NAME_PREFIXES = (
 # "Extract to Reaper", "Reaper Extract", etc. Below this we ask the user
 # to rename the preset rather than risk picking the wrong one.
 FUZZY_MATCH_THRESHOLD = 0.5
+
+# Upper bound on a Reaper column, to keep a malformed destination from
+# generating a runaway row list. Well above any real Copy Audio fit.
+MAX_REAPER_COLUMN = 512
 
 
 class DigicoError(Exception):
@@ -178,21 +195,43 @@ class DigicoError(Exception):
 # Supported session format. The .ses header is:
 #   "DiGiCo     <MODEL> .SES v<LETTER>"
 # where MODEL is the console family (SDQ = Quantum) and LETTER is the file-format
-# version. This tool was reverse-engineered against SDQ "vO" (Quantum software
-# v22). Older format versions store routing differently and aren't supported.
+# version. Verified against 'vO' (Quantum software v22) and 'vM'.
+#
+# The version letter is NOT used as a gate. It turned out to be a poor proxy:
+# 'vM' sessions differ from 'vO' only in the port-record size code, and both
+# parse identically once that's known. Gating on the letter rejected sessions
+# that work. Instead we feature-detect — if the structures this tool actually
+# needs are present, parse it; if not, say which structure is missing.
 SUPPORTED_MODEL = "SDQ"
-MIN_FORMAT_VERSION = "O"
+VERIFIED_FORMAT_VERSIONS = ("M", "O")
+
+
+def _format_version(data):
+    """Return the file-format letter from the header, or '?' if unreadable."""
+    idx = data.find(b".SES v")
+    if idx < 0 or idx + 6 >= len(data):
+        return "?"
+    ver = chr(data[idx + 6])
+    return ver if "A" <= ver <= "Z" else "?"
+
+
+def _has_port_records(data):
+    """True if any known port-record signature appears. Cheap — stops at the
+    first hit rather than collecting every record."""
+    return any(
+        data.find(bytes([0xCB, 0x00, size_byte, 0x00])) >= 0
+        for size_byte in PORT_RECORD_SIZE_BYTES
+    )
 
 
 def _check_supported_format(data):
-    """Raise DigicoError unless this is a supported SDQ vO+ session."""
+    """Raise DigicoError unless this session has the structures we need."""
     if data[:6] != b"DiGiCo":
         raise DigicoError(
             "This doesn't look like a DiGiCo session file (.ses)."
         )
     model = data[11:14].decode("latin-1", "replace").strip()
-    idx = data.find(b".SES v")
-    ver = chr(data[idx + 6]) if (idx >= 0 and idx + 6 < len(data)) else "?"
+    ver = _format_version(data)
 
     if model != SUPPORTED_MODEL:
         raise DigicoError(
@@ -200,13 +239,13 @@ def _check_supported_format(data):
             f"Only DiGiCo Quantum (SDQ) sessions are supported right now.\n"
             f"Support for other consoles can be added later."
         )
-    if not ("A" <= ver <= "Z") or ver < MIN_FORMAT_VERSION:
+    if not _has_port_records(data):
         raise DigicoError(
-            f"Unsupported session version (file format 'v{ver}').\n\n"
-            f"Only Quantum software v22 and later (file format 'v{MIN_FORMAT_VERSION}'+) "
-            f"is supported.\n"
-            f"Re-save the session on a current Quantum, or ask for this version "
-            f"to be added."
+            f"This session's port table is in a layout this tool doesn't "
+            f"recognise (file format 'v{ver}').\n\n"
+            f"Verified against: {', '.join('v' + v for v in VERIFIED_FORMAT_VERSIONS)}.\n"
+            f"Send this .ses over and support can be added — the difference is "
+            f"usually small."
         )
 
 
@@ -256,7 +295,7 @@ def _extract_strips_from_ses(data, ports):
     """
     input_pids = {
         pid for pid, name in ports.items()
-        if any(name.startswith(p) for p in INPUT_PORT_NAME_PREFIXES)
+        if INPUT_PORT_NAME_RE.match(name)
     }
 
     # Find all channel-strip port records (with their stereo flag).
@@ -324,14 +363,53 @@ def _extract_strips_from_ses(data, ports):
     return out
 
 
-def _extract_output_patches_from_ses(data, ports, waves_base):
-    """Find output buses (matrix/aux/group) patched directly to Waves output
-    ports — e.g. a matrix output assigned to Waves 59. These aren't Copy Audio
+# Record-card output ports are named "<family> <channel>" — "Waves 12",
+# "Trks 3", "Tracks 65". The channel number in the name is authoritative: a rig
+# fitted with two cards names them straight through ("Trks 1-64" then
+# "Tracks 65-128"), so reading the number handles that with no special case.
+CARD_PORT_NAME_RE = re.compile(r"^(?P<family>\D.*?)\s+(?P<num>\d+)$")
+
+
+def _split_card_name(name):
+    """('Waves 12') -> ('Waves', 12).  Returns (None, None) if not card-shaped."""
+    if not name:
+        return (None, None)
+    m = CARD_PORT_NAME_RE.match(name)
+    if not m:
+        return (None, None)
+    return (m.group("family"), int(m.group("num")))
+
+
+def _card_port_columns(ports, dst_port_pids):
+    """Map {port_pid: reaper_column} for the record-card outputs in play.
+
+    Walks outward from the ports the preset actually feeds, for as long as pid
+    and channel number advance in step. That picks up unused channels on the
+    same card (a bus can be patched straight to one) while excluding the same
+    card's input-direction records, which live in a separate pid block.
+    """
+    cols = {}
+    for pid in dst_port_pids:
+        family, num = _split_card_name(ports.get(pid))
+        if family is None:
+            continue
+        for step in (1, -1):
+            p, n = pid, num
+            while _split_card_name(ports.get(p)) == (family, n):
+                cols[p] = n
+                p += step
+                n += step
+    return cols
+
+
+def _extract_output_patches_from_ses(data, ports, card_cols):
+    """Find output buses (matrix/aux/group) patched directly to a record-card
+    output — e.g. a matrix output assigned to Waves 59. These aren't Copy Audio
     routings, so they show up as gaps in the Copy Audio CSV; this fills them.
 
     In a bus's snapshot block, parameter 0x0efe holds its output port pid as an
-    8-byte entry: `(fe 0e)(00 00 00 00)(port_pid u16 LE)`. When that port pid is
-    a Waves output (waves_base..waves_base+63), the bus feeds that Reaper track.
+    8-byte entry: `(fe 0e)(00 00 00 00)(port_pid u16 LE)`. When that pid is one
+    of `card_cols`, the bus feeds that Reaper track.
 
     Returns dict {col (1-indexed) -> bus_name}, last snapshot wins.
     """
@@ -362,9 +440,9 @@ def _extract_output_patches_from_ses(data, ports, waves_base):
         if k < 0 or k + 8 > len(region):
             continue
         port_pid = struct.unpack("<H", region[k + 6:k + 8])[0]
-        # Is it a Waves output port?
-        if waves_base <= port_pid <= waves_base + 63:
-            col = (port_pid - waves_base) + 1
+        # Is it a record-card output port?
+        if port_pid in card_cols:
+            col = card_cols[port_pid]
             if col not in col_to_bus or j > col_to_bus[col][1]:
                 col_to_bus[col] = (name, j)
     return {col: name for col, (name, _) in col_to_bus.items()}
@@ -601,22 +679,32 @@ def parse_digico_session(ses_path, rtf_path=None):
     matched_name, table_start, was_fuzzy = _find_preset_table(data)
     ports = _parse_port_records(data)
 
-    # Determine the Reaper card output base by finding "Waves 1" — there are
-    # usually two records (input + output directions); the higher pid_lo is
-    # the output side and matches the preset's dst encoding.
-    waves_1_pids = sorted(pid for pid, n in ports.items() if n == "Waves 1")
-    if not waves_1_pids:
-        raise DigicoError(
-            "Could not find a 'Waves 1' port record in this session.\n"
-            "The console doesn't appear to have a Reaper/SoundGrid card configured."
-        )
-    waves_base = max(waves_1_pids)
-    # The preset encodes dst as `waves_base + col` where col is 1-indexed —
-    # so subtract waves_base to recover the column number.
-
     raw_routings = list(_parse_preset_records(data, table_start))
     if not raw_routings:
         raise DigicoError("Found the preset, but it contains no routings.")
+
+    # Resolve each destination to a Reaper column. The preset encodes a
+    # destination as (port pid + 1), so the port record one below a dst holds
+    # the card channel — "Waves 12" -> column 12. Reading the number off the
+    # port name rather than doing arithmetic from a hardcoded "Waves 1" base
+    # means the card can be called anything ("Trks", "Tracks") and a two-card
+    # rig numbers straight through.
+    dst_cols = {}
+    unresolved_dsts = []
+    for _, dst_pid in raw_routings:
+        col = _split_card_name(ports.get(dst_pid - 1))[1]
+        if col is None:
+            unresolved_dsts.append(dst_pid)
+        elif 1 <= col <= MAX_REAPER_COLUMN:
+            dst_cols[dst_pid] = col
+    if not dst_cols:
+        raise DigicoError(
+            "Could not work out which Reaper card outputs this Copy Audio "
+            "preset feeds.\n"
+            "The console doesn't appear to have a Reaper/SoundGrid card "
+            "configured."
+        )
+    card_cols = _card_port_columns(ports, {d - 1 for d in dst_cols})
 
     # Primary path: extract strip names + input routes directly from the .ses
     ses_strips = _extract_strips_from_ses(data, ports)
@@ -658,9 +746,9 @@ def parse_digico_session(ses_path, rtf_path=None):
     rows_by_col = {}
     unnamed = []
     for src_pid, dst_pid in raw_routings:
-        col = dst_pid - waves_base
-        if col < 1 or col > 64:
-            continue  # out-of-range, skip
+        col = dst_cols.get(dst_pid)
+        if col is None:
+            continue  # destination we couldn't place — reported via info
         src_name = ports.get(src_pid, f"pid_0x{src_pid:04x}")
         if src_name in port_to_label:
             name, suffix = port_to_label[src_name]
@@ -676,7 +764,7 @@ def parse_digico_session(ses_path, rtf_path=None):
     # Fill any gaps with direct output-bus patches (e.g. a matrix output
     # assigned straight to a Waves port — common for press/broadcast feeds).
     # Only fills columns Copy Audio didn't claim, so it never overwrites.
-    output_patches = _extract_output_patches_from_ses(data, ports, waves_base)
+    output_patches = _extract_output_patches_from_ses(data, ports, card_cols)
     patched_cols = []
     for col, bus_name in output_patches.items():
         if col not in rows_by_col:
@@ -691,7 +779,11 @@ def parse_digico_session(ses_path, rtf_path=None):
         "max_col": max_col,
         "has_rtf": rtf_path is not None,
         "unnamed": unnamed,
-        "waves_base": f"0x{waves_base:04x}",
+        "cards": sorted({_split_card_name(ports.get(d - 1))[0] for d in dst_cols}),
+        "unplaced": [
+            ports.get(s, f"pid_0x{s:04x}")
+            for s, d in raw_routings if d in unresolved_dsts
+        ],
         "matched_name": matched_name,
         "was_fuzzy": was_fuzzy,
         "ses_strips_routed": sum(1 for _, _, r in ses_strips if r),
@@ -1160,6 +1252,9 @@ class DigicoTab(ttk.Frame):
         if info["unnamed"]:
             n = len(info["unnamed"])
             summary += f"\n   ({n} port{'s' if n != 1 else ''} fell back to raw port names — strip name missing in the RTF)"
+        if info["unplaced"]:
+            n = len(info["unplaced"])
+            summary += f"\n   ⚠ {n} routing{'s' if n != 1 else ''} could not be placed — see the dialog"
         self.status_var.set(summary)
 
         fuzzy_note = ""
@@ -1168,10 +1263,23 @@ class DigicoTab(ttk.Frame):
                 f'\nNote: matched preset "{info["matched_name"]}" rather than '
                 f'the canonical "{PRESET_NAME.decode()}".\n'
             )
+
+        # Never drop a routing quietly — a missing track is far more expensive
+        # to discover at soundcheck than a note here.
+        unplaced_note = ""
+        if info["unplaced"]:
+            listed = "\n".join(f"    • {n}" for n in info["unplaced"][:8])
+            more = "" if len(info["unplaced"]) <= 8 else f"\n    …and {len(info['unplaced']) - 8} more"
+            unplaced_note = (
+                f"\n⚠ These Copy Audio sources are patched to a card output "
+                f"this session doesn't name, so they have no track number and "
+                f"are NOT in the CSV:\n{listed}{more}\n"
+                f"Check them against the Copy Audio screen and add them by hand.\n"
+            )
         messagebox.showinfo(
             "CSV created",
             f"Wrote {len(rows)} Reaper tracks to:\n{out_path}\n"
-            f"{fuzzy_note}\n"
+            f"{fuzzy_note}{unplaced_note}\n"
             f"In Reaper (with the J&T Live Recording Template loaded):\n"
             f"  1. Click PATCH IMPORT in the toolbar\n"
             f"  2. Select this CSV file",
