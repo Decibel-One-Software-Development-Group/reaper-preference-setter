@@ -44,8 +44,7 @@ Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R
 
 Go to the [Releases page](https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases) and download for your platform:
 
-- **REAPER-Preference-Setter-macOS-AppleSilicon.dmg** — macOS on M1/M2/M3/M4 (signed and notarized)
-- **REAPER-Preference-Setter-macOS-Intel.dmg** — macOS on Intel (signed and notarized)
+- **REAPER-Preference-Setter-macOS.dmg** — macOS, universal (runs natively on both Apple Silicon and Intel Macs; signed and notarized)
 - **REAPER-Preference-Setter-Windows.zip** — Windows
 
 No Python installation required.
@@ -77,4 +76,4 @@ Without `tkinterdnd2`, the DiGiCo tab still works — just click the drop zone t
 
 - REAPER should be **closed** before applying preferences (the app will warn you if it's open)
 - DiGiCo session files must be from a **Quantum (SDQ) console running software v22 or later** (file format `vO`+). Older Quantum software, and SD7 / SD8 / SD9 consoles, use different file formats and aren't supported yet — the app detects this and tells you rather than producing wrong names.
-- macOS 10.15+ or Windows 10+
+- macOS 11 Big Sur or later (Apple Silicon or Intel), or Windows 10+

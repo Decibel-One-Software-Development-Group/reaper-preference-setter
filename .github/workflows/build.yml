@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*"
+  # Manual runs build and notarize the same artifacts without cutting a
+  # release — use this to prove a build before tagging. Artifacts land on the
+  # run itself; nothing is uploaded to a GitHub release.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,6 +15,7 @@ permissions:
 jobs:
   create_release:
     name: Create Release
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Create Release
@@ -23,57 +28,78 @@ jobs:
 
   build_macos:
     needs: create_release
-    # Both architectures build on macos-14 — Intel build cross-compiles via
-    # Rosetta 2 + arch -x86_64. This keeps everything on the plentiful Apple
-    # Silicon runner pool. macos-13 (Intel) runners have multi-hour free-tier
-    # queue times. Same pattern used by simchronize-server.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            arch_label: AppleSilicon
-          - arch: x86_64
-            arch_label: Intel
+    # Runs on tag pushes (after create_release) and on manual dispatch, where
+    # create_release is skipped.
+    if: ${{ !cancelled() && (needs.create_release.result == 'success' || needs.create_release.result == 'skipped') }}
+    # One universal2 .app — arm64 + x86_64 in a single binary, so it runs
+    # natively on both Apple Silicon and Intel Macs from one download.
+    #
+    # PyInstaller can only emit universal2 when the Python it freezes is itself
+    # universal2, and actions/setup-python only ships single-arch macOS builds.
+    # So we install python.org's official universal2 framework instead — its
+    # Python, _tkinter, and bundled Tcl/Tk 8.6 all carry both slices.
+    #
+    # 3.12.10 is the last 3.12 with a macOS installer (3.12 is security-fix
+    # only from 3.12.11 on, source-only). Move to a 3.13.x installer when this
+    # needs updating.
     runs-on: macos-14
 
     env:
-      DMG: REAPER-Preference-Setter-macOS-${{ matrix.arch_label }}.dmg
+      DMG: REAPER-Preference-Setter-macOS.dmg
+      PY_VERSION: "3.12.10"
+      PY_SHORT: "3.12"
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install universal2 Python from python.org
+        run: |
+          curl -fsSL -o python.pkg \
+            "https://www.python.org/ftp/python/${PY_VERSION}/python-${PY_VERSION}-macos11.pkg"
+          sudo installer -pkg python.pkg -target /
+          PY_ROOT="/Library/Frameworks/Python.framework/Versions/${PY_SHORT}"
+          echo "PYBIN=${PY_ROOT}/bin/python3" >> "$GITHUB_ENV"
+          # A thin Python silently produces a thin app, which is exactly the
+          # bug this build exists to prevent. Fail here, not at download time.
+          lipo -info "${PY_ROOT}/Python"
+          lipo -info "${PY_ROOT}/Python" | grep -q "x86_64 arm64" \
+            || { echo "::error::python.org framework is not universal2"; exit 1; }
+          "${PY_ROOT}/bin/python3" -c "import sys, _tkinter; print(sys.version)"
 
       - name: Install PyInstaller
         run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            arch -x86_64 python3 -m pip install pyinstaller tkinterdnd2
-          else
-            pip install pyinstaller tkinterdnd2
-          fi
+          "$PYBIN" -m pip install --upgrade pip
+          "$PYBIN" -m pip install pyinstaller tkinterdnd2
 
-      - name: Build .app with PyInstaller
+      - name: Build universal2 .app with PyInstaller
         run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            arch -x86_64 python3 -m PyInstaller --windowed --onedir \
-              --name "REAPER Preference Setter" \
-              --icon icon.icns \
-              --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
-              --collect-all tkinterdnd2 \
-              --target-architecture x86_64 \
-              configure_reaper.py
-          else
-            pyinstaller --windowed --onedir \
-              --name "REAPER Preference Setter" \
-              --icon icon.icns \
-              --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
-              --collect-all tkinterdnd2 \
-              --target-architecture arm64 \
-              configure_reaper.py
-          fi
+          "$PYBIN" -m PyInstaller --windowed --onedir --noconfirm \
+            --name "REAPER Preference Setter" \
+            --icon icon.icns \
+            --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
+            --collect-all tkinterdnd2 \
+            --target-architecture universal2 \
+            configure_reaper.py
+
+      - name: Verify the app is universal
+        run: |
+          APP="dist/REAPER Preference Setter.app"
+          MAIN="${APP}/Contents/MacOS/REAPER Preference Setter"
+          PYLIB="$(find "${APP}" -type f -name Python -print -quit)"
+
+          for f in "${MAIN}" "${PYLIB}"; do
+            lipo -info "${f}"
+            lipo -info "${f}" | grep -q "x86_64 arm64" \
+              || { echo "::error::${f} is not universal2"; exit 1; }
+          done
+
+          # tkinterdnd2 ships its tkdnd libraries thin, one directory per
+          # platform, and picks the matching one at runtime — those are
+          # expected here. Anything else thin is worth a look.
+          echo "Thin Mach-O files in the bundle (tkdnd is expected):"
+          find "${APP}" -type f \( -name '*.dylib' -o -name '*.so' -o -perm -111 \) -print0 \
+            | xargs -0 -n1 file 2>/dev/null \
+            | grep 'Mach-O' | grep -v 'universal binary' || echo "  (none)"
 
       - name: Import Apple Certificate
         run: |
@@ -150,7 +176,14 @@ jobs:
           xcrun stapler staple "${DMG}"
           xcrun stapler validate "${DMG}"
 
+      - name: Upload DMG as run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ env.DMG }}
+
       - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
@@ -159,6 +192,7 @@ jobs:
 
   build_windows:
     needs: create_release
+    if: ${{ !cancelled() && (needs.create_release.result == 'success' || needs.create_release.result == 'skipped') }}
     runs-on: windows-latest
 
     steps:
@@ -178,7 +212,14 @@ jobs:
         run: Compress-Archive -Path "dist/REAPER-Preference-Setter.exe", "README.md" -DestinationPath "REAPER-Preference-Setter-Windows.zip"
         shell: pwsh
 
+      - name: Upload zip as run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: REAPER-Preference-Setter-Windows.zip
+
       - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
