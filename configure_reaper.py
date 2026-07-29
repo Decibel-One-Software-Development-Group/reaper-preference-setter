@@ -187,6 +187,17 @@ FUZZY_MATCH_THRESHOLD = 0.5
 # generating a runaway row list. Well above any real Copy Audio fit.
 MAX_REAPER_COLUMN = 512
 
+# When a Copy Audio source has no channel strip, its port name becomes the track
+# name. A stagebox socket prefix is patch information rather than a name, so
+# "S4-6 Elsa BU" reads better in Reaper as "Elsa BU". Rack ports named by number
+# ("6:Dnt64 25", "0:Mic/Lin 10") keep their name — there the number IS the name.
+SOCKET_PREFIX_RE = re.compile(r"^S\d+-\d+\s+(?=\S)")
+
+
+def _fallback_label(port_name):
+    """Track name for a source with no channel strip behind it."""
+    return SOCKET_PREFIX_RE.sub("", port_name)
+
 
 class DigicoError(Exception):
     """Raised when a DiGiCo session can't be parsed for Copy Audio export."""
@@ -290,8 +301,9 @@ def _extract_strips_from_ses(data, ports):
     within ~250 bytes. The file holds multiple snapshots; the LAST occurrence
     is the live state.
 
-    Returns list of (strip_name, is_stereo, input_route_name) where any field
-    may be empty if not found.
+    Returns list of (strip_name, is_stereo, input_route_name, input_route_pid)
+    where any field may be empty/None if not found. The pid is what pairs a
+    stereo strip with its right-hand port — see `parse_digico_session`.
     """
     input_pids = {
         pid for pid, name in ports.items()
@@ -338,10 +350,11 @@ def _extract_strips_from_ses(data, ports):
         try:
             name_b = name.encode("latin-1")
         except UnicodeEncodeError:
-            out.append((name, is_stereo, ""))
+            out.append((name, is_stereo, "", None))
             continue
         needle = STRIP_BLOCK_HEADER + bytes([len(name_b)]) + name_b
         last_route = ""
+        last_route_pid = None
         i = 0
         while True:
             j = data.find(needle, i)
@@ -358,8 +371,9 @@ def _extract_strips_from_ses(data, ports):
                 pid = struct.unpack("<H", data[off:off + 2])[0]
                 if pid in input_pids:
                     last_route = ports[pid]
+                    last_route_pid = pid
                     break
-        out.append((name, is_stereo, last_route))
+        out.append((name, is_stereo, last_route, last_route_pid))
     return out
 
 
@@ -706,20 +720,30 @@ def parse_digico_session(ses_path, rtf_path=None):
         )
     card_cols = _card_port_columns(ports, {d - 1 for d in dst_cols})
 
-    # Primary path: extract strip names + input routes directly from the .ses
+    # Primary path: extract strip names + input routes directly from the .ses.
+    #
+    # A stereo strip occupies two consecutive input ports, and the console
+    # orders ports by pid — so the right-hand side is simply the port at
+    # (route pid + 1). Deriving it from the port *name* instead (bump the
+    # trailing number) only works when ports are named "6:Dnt64 25"; it silently
+    # produced no .R at all for named stagebox sockets like "S4-4 K1 L", which
+    # left the right-hand track labelled with a raw port name. Both rules agree
+    # wherever the name-based one applies.
     ses_strips = _extract_strips_from_ses(data, ports)
-    port_to_label = {}
-    for name, is_stereo, route in ses_strips:
-        if not (name and route):
+    pid_to_label = {}
+    for name, is_stereo, route, route_pid in ses_strips:
+        if not (name and route) or route_pid is None:
             continue
         if is_stereo:
-            port_to_label[route] = (name, ".L")
-            m = re.match(r"^(.*?)(\d+)$", route)
-            if m:
-                prefix, idx = m.group(1), int(m.group(2))
-                port_to_label[f"{prefix}{idx + 1}"] = (name, ".R")
+            pid_to_label[route_pid] = (name, ".L")
+            if route_pid + 1 in ports:
+                pid_to_label[route_pid + 1] = (name, ".R")
         else:
-            port_to_label[route] = (name, "")
+            pid_to_label[route_pid] = (name, "")
+
+    # RTF strips are keyed by route string — the report has no pids. Kept
+    # name-based so the RTF path behaves exactly as before.
+    port_to_label = {}
 
     # Optional fallback: if an RTF is provided, fill in any strips the .ses
     # extraction missed (rare, but helps if a strip has no current snapshot).
@@ -750,11 +774,16 @@ def parse_digico_session(ses_path, rtf_path=None):
         if col is None:
             continue  # destination we couldn't place — reported via info
         src_name = ports.get(src_pid, f"pid_0x{src_pid:04x}")
-        if src_name in port_to_label:
-            name, suffix = port_to_label[src_name]
+        # .ses strips (keyed by pid) win over RTF strips (keyed by name).
+        entry = pid_to_label.get(src_pid) or port_to_label.get(src_name)
+        if entry:
+            name, suffix = entry
             label = name + suffix
         else:
-            label = src_name
+            # No channel strip feeds this source — it's patched straight from
+            # the socket to the recorder (playback, keyboard rigs, backup mics).
+            # The port name is the only label the session has.
+            label = _fallback_label(src_name)
             unnamed.append(src_name)
         rows_by_col[col] = label
 
@@ -786,7 +815,7 @@ def parse_digico_session(ses_path, rtf_path=None):
         ],
         "matched_name": matched_name,
         "was_fuzzy": was_fuzzy,
-        "ses_strips_routed": sum(1 for _, _, r in ses_strips if r),
+        "ses_strips_routed": sum(1 for _, _, r, _pid in ses_strips if r),
         "ses_strips_total": len(ses_strips),
         "output_patches": len(patched_cols),
     }
