@@ -64,6 +64,16 @@ def _strip_block(name, input_pid):
     return block + b"\x00" * 64
 
 
+def _bus_block(name, out_port_pid):
+    """Output-bus snapshot: same `da 00 3a 00` header as a strip block, with
+    parameter 0x0efe carrying the port the bus is patched to."""
+    name = name.encode("latin-1")
+    block = bytes.fromhex("da003a00") + b"\x02\x00\x00\x00" + bytes([len(name)]) + name
+    block += b"\x00" * 16
+    block += struct.pack("<H", 0x0EFE) + b"\x00" * 4 + struct.pack("<H", out_port_pid)
+    return block + b"\x00" * 64
+
+
 def _preset(routings, name=b"Extract for Reaper"):
     """Preset name, 16-byte header, then 8-byte (src, 1, 0, dst) slots."""
     table = b""
@@ -74,11 +84,12 @@ def _preset(routings, name=b"Extract for Reaper"):
 
 
 def build_session(*, version=b"O", size_byte=0x79, cards, inputs, strips,
-                  routings, model=b"SDQ"):
+                  routings, model=b"SDQ", buses=()):
     """cards: [(family, first_pid, first_channel, count)]
        inputs: [(pid, name)]
        strips: [(pid, name, input_pid)] or [(pid, name, input_pid, stereo)]
-       routings: [(src_pid, dst_pid)]"""
+       routings: [(src_pid, dst_pid)]
+       buses: [(name, out_port_pid)] — patched straight to a record output"""
     strips = [s if len(s) == 4 else (*s, False) for s in strips]
     out = _header(model, version) + b"\x00" * 64
     for family, first_pid, first_ch, count in cards:
@@ -91,6 +102,8 @@ def build_session(*, version=b"O", size_byte=0x79, cards, inputs, strips,
         out += _port_record(pid, 1, name, size_byte, stereo=stereo)
     for _, name, input_pid, _ in strips:
         out += _strip_block(name, input_pid)
+    for name, out_pid in buses:
+        out += _bus_block(name, out_pid)
     return out + _preset(routings)
 
 
@@ -167,19 +180,77 @@ class DigicoParserTests(unittest.TestCase):
         self.assertEqual(info["cards"], ["1:MADI"])
         self.assertEqual(info["unplaced"], [])
 
-    def test_two_madi_ports_sharing_a_channel_are_refused(self):
-        """Two MADI ports both restart at channel 1, so both claim column 1.
-        Emitting one and dropping the other would be wrong invisibly."""
-        data = build_session(
+    def _two_stream_session(self):
+        """MADI 1 carries Copy Audio; MADI 2 carries buses patched straight to
+        it — the shape of a desk recording the mix alongside the channels."""
+        return build_session(
             version=b"O", size_byte=0x79,
-            cards=[("1:MADI", 0x4F00, 1, 2), ("2:MADI", 0x5000, 1, 2)],
+            cards=[("1:MADI", 0x4F00, 1, 4), ("2:MADI", 0x5000, 1, 4)],
             inputs=[(0x2600, "R-Dnt 1"), (0x2601, "R-Dnt 2")],
             strips=[(0x0100, "Oliver", 0x2600), (0x0101, "Claire", 0x2601)],
-            routings=[(0x2600, 0x4F01), (0x2601, 0x5001)],
+            routings=[(0x2600, 0x4F01), (0x2601, 0x4F02)],
+            buses=[("Program L", 0x5000), ("Program R", 0x5001)],
         )
+
+    def test_picker_offers_record_ports_and_preselects_copy_audio(self):
+        self.tmp.write_bytes(self._two_stream_session())
+        targets = cr.list_record_targets(self.tmp)
+        by_family = {t["family"]: t for t in targets}
+        self.assertEqual(set(by_family), {"1:MADI", "2:MADI"})
+        self.assertTrue(by_family["1:MADI"]["default"])
+        self.assertEqual(by_family["1:MADI"]["copy_audio"], 2)
+        # The second stream carries no Copy Audio, so it is offered unticked —
+        # the user says whether they are recording it.
+        self.assertFalse(by_family["2:MADI"]["default"])
+        self.assertEqual(by_family["2:MADI"]["patched"], 2)
+        self.assertEqual(by_family["2:MADI"]["patch_names"], ["Program L", "Program R"])
+
+    def test_picker_excludes_the_racks_copy_audio_reads_from(self):
+        """Buses get patched back out to the same Dante rack the desk records
+        from. Offering that rack would invite reverb returns into the list."""
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 4), ("R-Dnt", 0x2600, 1, 4)],
+            inputs=[(0x2600, "R-Dnt 1"), (0x2601, "R-Dnt 2")],
+            strips=[(0x0100, "Oliver", 0x2600), (0x0101, "Claire", 0x2601)],
+            routings=[(0x2600, 0x4F01), (0x2601, 0x4F02)],
+            buses=[("Vox Rev 1", 0x2602)],
+        )
+        self.tmp.write_bytes(data)
+        families = {t["family"] for t in cr.list_record_targets(self.tmp)}
+        self.assertIn("1:MADI", families)
+        self.assertNotIn("R-Dnt", families)
+
+    def test_default_selection_is_the_copy_audio_port_alone(self):
+        rows, info = parse(self._two_stream_session(), self.tmp)
+        self.assertEqual(rows, ["Oliver", "Claire"])
+        self.assertEqual(info["cards"], ["1:MADI"])
+
+    def test_second_stream_starts_after_the_whole_of_the_first(self):
+        """Each MADI stream restarts at channel 1, so the second begins after
+        all 4 channels of the first — unpatched tail included."""
+        self.tmp.write_bytes(self._two_stream_session())
+        sel = [t["first_pid"] for t in cr.list_record_targets(self.tmp)]
+        rows, info = cr.parse_digico_session(self.tmp, selected_targets=sel)
+        self.assertEqual(rows, ["Oliver", "Claire", "", "", "Program L", "Program R"])
+        self.assertEqual(info["output_patches"], 2)
+
+    def test_preview_count_matches_the_csv_it_would_write(self):
+        """The picker shows a track count before you convert. If that drifts
+        from what the parser actually writes, the number is a lie."""
+        self.tmp.write_bytes(self._two_stream_session())
+        targets = cr.list_record_targets(self.tmp)
+        both = [t["first_pid"] for t in targets]
+        for sel in (both, [targets[0]["first_pid"]], [targets[1]["first_pid"]]):
+            with self.subTest(selection=sel):
+                rows, _ = cr.parse_digico_session(self.tmp, selected_targets=sel)
+                self.assertEqual(cr.track_count_for(targets, sel), len(rows))
+
+    def test_choosing_nothing_is_refused_clearly(self):
+        self.tmp.write_bytes(self._two_stream_session())
         with self.assertRaises(cr.DigicoError) as caught:
-            parse(data, self.tmp)
-        self.assertIn("channel 1", str(caught.exception))
+            cr.parse_digico_session(self.tmp, selected_targets=[])
+        self.assertIn("No record outputs were chosen", str(caught.exception))
 
     def test_unplaceable_destination_is_reported_not_dropped(self):
         """A destination with no named port must surface, never vanish."""

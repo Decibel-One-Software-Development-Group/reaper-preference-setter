@@ -1,4 +1,4 @@
-# REAPER Preference Setter
+# SiRPS
 
 A simple app to configure REAPER DAW preferences on any machine, and to generate Reaper track-name CSVs from DiGiCo SDQ session files. Useful for touring, studio setups, or maintaining consistent settings across multiple installs.
 
@@ -35,8 +35,17 @@ Channel-strip names, stereo flags, and current input routes are all read directl
 
 1. Switch to the **DiGiCo → Reaper CSV** tab
 2. Drag the `.ses` (and optionally `.rtf`) onto the drop zone — or click to browse
-3. Click **Convert → CSV** and choose where to save
-4. In Reaper with the J&T template loaded, click **PATCH IMPORT** and select the CSV
+3. Under **Record outputs**, tick the port (or ports) you record to. The port carrying your Copy Audio preset is ticked for you; tick a second one if you also record outputs patched straight to it. The track count updates as you tick.
+4. Click **Convert → CSV** and choose where to save
+5. In Reaper with the J&T template loaded, click **PATCH IMPORT** and select the CSV
+
+### Recording more than one port
+
+Copy Audio names its own destination, so the app finds that port on its own. It can't find a *second* stream carrying outputs you patched directly — a program mix, press feeds, a matrix — because nothing in Copy Audio refers to them. That's what the **Record outputs** list is for: tick both, and everything patched to either lands in one CSV.
+
+Ports are laid out in the order the console lists them, each taking its full width. So MADI 1 occupies Reaper inputs 1–64 even if you only patched 1–62, and MADI 2 starts at 65 — matching how the interface hands the streams to Reaper. Unpatched channels come out as blank rows, which is what keeps the numbering honest.
+
+The racks Copy Audio *reads from* are deliberately left off the list. Reverb and aux returns get patched back out to those same Dante ports, and offering them would invite effects returns into your track list.
 
 Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R` rows automatically, provided your Copy Audio sends each side to consecutive outputs.
 
@@ -44,15 +53,15 @@ Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R
 
 Go to the [Releases page](https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases) and download for your platform:
 
-- **REAPER-Preference-Setter-macOS.dmg** — macOS, universal (runs natively on both Apple Silicon and Intel Macs; signed and notarized)
-- **REAPER-Preference-Setter-Windows.zip** — Windows
+- **SiRPS-macOS.dmg** — macOS, universal (runs natively on both Apple Silicon and Intel Macs; signed and notarized)
+- **SiRPS-Windows.zip** — Windows
 
 No Python installation required.
 
 ### macOS
 
 1. Open the `.dmg` file
-2. Drag **REAPER Preference Setter** to your Applications folder (or run it directly)
+2. Drag **SiRPS** to your Applications folder (or run it directly)
 3. The app is signed and notarized — it should open without Gatekeeper warnings
 
 ### Windows
@@ -75,6 +84,5 @@ Without `tkinterdnd2`, the DiGiCo tab still works — just click the drop zone t
 ## Requirements
 
 - REAPER should be **closed** before applying preferences (the app will warn you if it's open)
-- Recording over MADI is supported, but only to a **single MADI port**. Each MADI port numbers its channels from 1, so two ports would both claim Reaper input 1 — the app refuses rather than guess the order. Record cards (Waves, Trks) number straight through, so two of those are fine.
 - DiGiCo session files must be from a **Quantum (SDQ) console running software v22 or later** (file format `vO`+). Older Quantum software, and SD7 / SD8 / SD9 consoles, use different file formats and aren't supported yet — the app detects this and tells you rather than producing wrong names.
 - macOS 11 Big Sur or later (Apple Silicon or Intel), or Windows 10+

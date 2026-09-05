@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-REAPER Preference Setter + DiGiCo Copy Audio → Reaper CSV exporter.
+SiRPS + DiGiCo Copy Audio → Reaper CSV exporter.
 
 Tab 1 — Preferences: configure reaper.ini (startup, save paths, template, peaks).
 Tab 2 — DiGiCo → Reaper CSV: generate a single-column track-name CSV from a
@@ -695,7 +695,120 @@ def _parse_preset_records(data, start, max_records=1024):
         yield (src_pid, dst_pid)
 
 
-def parse_digico_session(ses_path, rtf_path=None):
+def _port_blocks(ports):
+    """Group card-shaped ports into contiguous blocks.
+
+    A block is a run whose pid and channel number advance in step — one
+    direction of one card or MADI stream. A console lists a stream once per
+    direction, so "1:MADI" yields two blocks; only the one that receives
+    routings or patches is a record destination.
+    """
+    by_family = {}
+    for pid, name in ports.items():
+        family, num = _split_card_name(name)
+        if family is not None:
+            by_family.setdefault(family, []).append((pid, num))
+
+    blocks = []
+    for family, entries in by_family.items():
+        entries.sort()
+        run = None
+        for pid, num in entries:
+            if run and pid == run["last_pid"] + 1 and num == run["last_ch"] + 1:
+                run["last_pid"], run["last_ch"] = pid, num
+                run["count"] += 1
+                continue
+            if run:
+                blocks.append(run)
+            run = {"family": family, "first_pid": pid, "first_ch": num,
+                   "last_pid": pid, "last_ch": num, "count": 1}
+        if run:
+            blocks.append(run)
+    blocks.sort(key=lambda b: b["first_pid"])
+    return blocks
+
+
+def _record_targets(data, ports, raw_routings):
+    """Candidate record destinations — what the port picker offers.
+
+    A block qualifies if the Copy Audio preset feeds it, or if output buses are
+    patched straight to it. Families that *feed* Copy Audio are excluded: those
+    are the racks the desk records from, and buses get patched to them too
+    (reverb and aux returns sent back out over Dante), so offering them would
+    invite effects returns into the track list.
+    """
+    dst_pids = {d - 1 for _, d in raw_routings}
+    src_pids = {s for s, _ in raw_routings}
+    source_families = set()
+    for pid in src_pids:
+        for probe in (pid, pid + 1):
+            fam = _split_card_name(ports.get(probe))[0]
+            if fam:
+                source_families.add(fam)
+
+    targets = []
+    for b in _port_blocks(ports):
+        if b["family"] in source_families:
+            continue
+        pids = range(b["first_pid"], b["first_pid"] + b["count"])
+        cols = {pid: b["first_ch"] + (pid - b["first_pid"]) for pid in pids}
+        n_copy = sum(1 for pid in pids if pid in dst_pids)
+        patches = _extract_output_patches_from_ses(data, ports, cols)
+        if not (n_copy or patches):
+            continue
+        used = [pid - b["first_pid"] + 1 for pid in pids if pid in dst_pids]
+        used += [c - b["first_ch"] + 1 for c in patches]
+        targets.append({
+            "family": b["family"],
+            "first_pid": b["first_pid"],
+            "first_ch": b["first_ch"],
+            "count": b["count"],
+            "copy_audio": n_copy,
+            "patched": len(patches),
+            "patch_names": [patches[c] for c in sorted(patches)],
+            "last_used": max(used) if used else 0,
+            "default": n_copy > 0,
+        })
+    return targets
+
+
+def _assign_bases(chosen):
+    """Reaper input each chosen port starts at.
+
+    Record cards number straight through — "Trks 1-64" then "Tracks 65-128" —
+    so where a block's own numbering already continues, that numbering is
+    authoritative. MADI doesn't: every stream restarts at 1, so a second stream
+    begins after the whole of the one before it, unpatched tail included, which
+    is how the interface hands them to Reaper.
+    """
+    bases, used = {}, 0
+    for t in chosen:
+        base = t["first_ch"] - 1 if t["first_ch"] > 1 else used
+        bases[t["first_pid"]] = base
+        used = max(used, base + t["count"])
+    return bases
+
+
+def track_count_for(targets, selected_pids):
+    """Rows the CSV would have for this selection, without re-parsing."""
+    want = set(selected_pids)
+    chosen = [t for t in targets if t["first_pid"] in want]
+    bases = _assign_bases(chosen)
+    return max((bases[t["first_pid"]] + t["last_used"]
+                for t in chosen if t["last_used"]), default=0)
+
+
+def list_record_targets(ses_path):
+    """Public: the record destinations in a session, for the port picker."""
+    with open(ses_path, "rb") as f:
+        data = f.read()
+    _check_supported_format(data)
+    _, table_start, _ = _find_preset_table(data)
+    ports = _parse_port_records(data)
+    return _record_targets(data, ports, list(_parse_preset_records(data, table_start)))
+
+
+def parse_digico_session(ses_path, rtf_path=None, selected_targets=None):
     """Parse a DiGiCo .ses (and optional .rtf report) into Reaper CSV rows.
 
     Returns (rows, info) where:
@@ -721,42 +834,51 @@ def parse_digico_session(ses_path, rtf_path=None):
     # port name rather than doing arithmetic from a hardcoded "Waves 1" base
     # means the card can be called anything ("Trks", "Tracks") and a two-card
     # rig numbers straight through.
+    targets = _record_targets(data, ports, raw_routings)
+    if not targets:
+        raise DigicoError(
+            "Could not work out which record outputs this session uses.\n"
+            "Nothing that looks like a record card (Waves, Trks) or a MADI "
+            "port carries this Copy Audio preset or any patched output."
+        )
+
+    if selected_targets is None:
+        chosen = [t for t in targets if t["default"]]
+    else:
+        want = set(selected_targets)
+        chosen = [t for t in targets if t["first_pid"] in want]
+    if not chosen:
+        raise DigicoError(
+            "No record outputs were chosen, so there's nothing to build a "
+            "track list from.\n"
+            "Pick the port (or ports) you record to."
+        )
+
+    bases = _assign_bases(chosen)
+
+    card_cols = {}
+    clash = {}
+    for t in chosen:
+        base = bases[t["first_pid"]]
+        for i in range(t["count"]):
+            col = base + i + 1
+            if clash.setdefault(col, t["family"]) != t["family"]:
+                raise DigicoError(
+                    f"'{clash[col]}' and '{t['family']}' both land on Reaper "
+                    f"input {col}.\n"
+                    "Their channel numbering overlaps, so the track order "
+                    "can't be worked out. Choose one of them."
+                )
+            card_cols[t["first_pid"] + i] = col
+
     dst_cols = {}
     unresolved_dsts = []
     for _, dst_pid in raw_routings:
-        col = _split_card_name(ports.get(dst_pid - 1))[1]
+        col = card_cols.get(dst_pid - 1)
         if col is None:
             unresolved_dsts.append(dst_pid)
         elif 1 <= col <= MAX_REAPER_COLUMN:
             dst_cols[dst_pid] = col
-    if not dst_cols:
-        raise DigicoError(
-            "Could not work out which record outputs this Copy Audio preset "
-            "feeds.\n"
-            "The destinations don't look like a record card (Waves, Trks) or "
-            "a MADI port."
-        )
-
-    # Record cards number straight through, so a rig can feed two of them
-    # ("Trks 1-64" then "Tracks 65-128") and still land on distinct columns.
-    # MADI doesn't: every port restarts at 1, so "1:MADI 1" and "2:MADI 1" both
-    # claim column 1 and one would silently overwrite the other. There's no way
-    # to know which order the interface concatenates the streams in, so refuse
-    # rather than emit a CSV that's wrong in a way nobody would spot.
-    col_owner = {}
-    for dst_pid, col in sorted(dst_cols.items()):
-        family = _split_card_name(ports.get(dst_pid - 1))[0]
-        if col_owner.setdefault(col, family) != family:
-            raise DigicoError(
-                f"This preset records to both '{col_owner[col]}' and "
-                f"'{family}', and they both use channel {col}.\n"
-                "There's no way to tell which Reaper input each one arrives "
-                "on, so the track order can't be worked out.\n"
-                "Record to one port, or to cards whose channels number "
-                "straight through."
-            )
-
-    card_cols = _card_port_columns(ports, {d - 1 for d in dst_cols})
 
     # Primary path: extract strip names + input routes directly from the .ses.
     #
@@ -832,12 +954,12 @@ def parse_digico_session(ses_path, rtf_path=None):
             unnamed.append(src_name)
         rows_by_col[col] = label
 
-    if not rows_by_col:
-        return [], {"count": 0, "max_col": 0}
-
-    # Fill any gaps with direct output-bus patches (e.g. a matrix output
-    # assigned straight to a Waves port — common for press/broadcast feeds).
-    # Only fills columns Copy Audio didn't claim, so it never overwrites.
+    # Direct output-bus patches — a matrix, group or aux assigned straight to a
+    # record output, common for program and press feeds. Copy Audio never names
+    # these, so on a stream the desk records but doesn't copy to they are the
+    # only content there is; fill before deciding the CSV is empty, or ticking
+    # that stream alone would write nothing. Only fills columns Copy Audio
+    # didn't claim, so it never overwrites a channel name.
     output_patches = _extract_output_patches_from_ses(data, ports, card_cols)
     patched_cols = []
     for col, bus_name in output_patches.items():
@@ -845,7 +967,7 @@ def parse_digico_session(ses_path, rtf_path=None):
             rows_by_col[col] = bus_name
             patched_cols.append(col)
 
-    max_col = max(rows_by_col.keys())
+    max_col = max(rows_by_col.keys(), default=0)
     rows = [rows_by_col.get(c, "") for c in range(1, max_col + 1)]
 
     info = {
@@ -930,7 +1052,7 @@ class PreferencesTab(ttk.Frame):
 
     def _build_ui(self):
         row = 0
-        ttk.Label(self, text="REAPER Preference Setter", font=("", 16, "bold")).grid(
+        ttk.Label(self, text="SiRPS", font=("", 16, "bold")).grid(
             row=row, column=0, columnspan=3, pady=(0, 5), sticky="w")
         row += 1
         ttk.Label(self, text=f"Config: {self.ini_path}", font=("", 10)).grid(
@@ -1099,6 +1221,8 @@ class DigicoTab(ttk.Frame):
         super().__init__(parent, padding=20)
         self.ses_path = None
         self.rtf_path = None
+        self.targets = []
+        self.target_vars = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -1163,6 +1287,24 @@ class DigicoTab(ttk.Frame):
         self.rtf_var = tk.StringVar(value="(none — optional)")
         ttk.Label(files_frame, textvariable=self.rtf_var).grid(
             row=1, column=1, sticky="w", padx=(8, 0))
+        row += 1
+
+        # Record outputs — which ports the desk records to. Copy Audio names
+        # its own destination, but outputs patched straight to a second stream
+        # (program, press feeds) are invisible to it, and the racks Copy Audio
+        # reads *from* also carry patched buses. Only the engineer knows which
+        # ports the recorder is actually fed from, so they choose.
+        self.ports_frame = ttk.LabelFrame(self, text="Record outputs", padding=10)
+        self.ports_frame.grid(row=row, column=0, sticky="ew", pady=(0, 10))
+        self.ports_hint = ttk.Label(
+            self.ports_frame, justify="left", wraplength=520,
+            text="Drop a session to see the ports it records to.")
+        self.ports_hint.grid(row=0, column=0, sticky="w")
+        self.ports_rows = ttk.Frame(self.ports_frame)
+        self.ports_rows.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self.count_var = tk.StringVar(value="")
+        ttk.Label(self.ports_frame, textvariable=self.count_var,
+                  foreground="#0a5").grid(row=2, column=0, sticky="w", pady=(6, 0))
         row += 1
 
         ttk.Separator(self).grid(row=row, column=0, sticky="ew", pady=10)
@@ -1278,6 +1420,54 @@ class DigicoTab(ttk.Frame):
         self.status_var.set(msg)
         self.convert_btn.config(state="normal")
 
+        try:
+            self.targets = list_record_targets(self.ses_path)
+        except Exception:
+            self.targets = []
+        self._populate_targets()
+
+    def _populate_targets(self):
+        for w in self.ports_rows.winfo_children():
+            w.destroy()
+        self.target_vars = {}
+        if not self.targets:
+            self.ports_hint.config(
+                text="No record outputs found in this session.")
+            self.count_var.set("")
+            return
+        self.ports_hint.config(
+            text="Tick the port (or ports) you record to. The one carrying "
+                 "Copy Audio is ticked for you; tick another if you also "
+                 "record outputs patched straight to it.")
+        for i, t in enumerate(self.targets):
+            var = tk.BooleanVar(value=t["default"])
+            self.target_vars[t["first_pid"]] = var
+            bits = []
+            if t["copy_audio"]:
+                bits.append(f"{t['copy_audio']} from Copy Audio")
+            if t["patched"]:
+                shown = ", ".join(t["patch_names"][:3])
+                if len(t["patch_names"]) > 3:
+                    shown += ", …"
+                plural = "s" if t["patched"] != 1 else ""
+                bits.append(f"{t['patched']} patched output{plural} ({shown})")
+            last_ch = t["first_ch"] + t["count"] - 1
+            ttk.Checkbutton(
+                self.ports_rows,
+                text=f"{t['family']}   ch {t['first_ch']}–{last_ch}   —   "
+                     + "; ".join(bits),
+                variable=var, command=self._refresh_count,
+            ).grid(row=i, column=0, sticky="w", pady=1)
+        self._refresh_count()
+
+    def _refresh_count(self):
+        selected = [pid for pid, v in self.target_vars.items() if v.get()]
+        n = track_count_for(self.targets, selected)
+        self.count_var.set(
+            f"→  {n} Reaper track{'s' if n != 1 else ''}" if n else
+            "→  nothing selected")
+        self.convert_btn.config(state="normal" if n else "disabled")
+
     def _clear(self):
         self.ses_path = None
         self.rtf_path = None
@@ -1285,6 +1475,9 @@ class DigicoTab(ttk.Frame):
         self.rtf_var.set("(none — optional)")
         self.status_var.set("Drop a .ses file to begin.")
         self.convert_btn.config(state="disabled")
+        self.targets = []
+        self._populate_targets()
+        self.ports_hint.config(text="Drop a session to see the ports it records to.")
 
     # ── Convert ──
 
@@ -1292,7 +1485,10 @@ class DigicoTab(ttk.Frame):
         if not self.ses_path:
             return
         try:
-            rows, info = parse_digico_session(self.ses_path, self.rtf_path)
+            selected = ([pid for pid, v in self.target_vars.items() if v.get()]
+                        if self.target_vars else None)
+            rows, info = parse_digico_session(
+                self.ses_path, self.rtf_path, selected_targets=selected)
         except DigicoError as e:
             messagebox.showerror("Conversion failed", str(e))
             return
@@ -1369,7 +1565,7 @@ class App:
     def __init__(self):
         # tkinterdnd2 ships its own Tk subclass that wires up DnD on the root window
         self.root = TkinterDnD.Tk() if DND_AVAILABLE else tk.Tk()
-        self.root.title("REAPER Preference Setter")
+        self.root.title("SiRPS")
         self.root.resizable(False, False)
 
         notebook = ttk.Notebook(self.root)
