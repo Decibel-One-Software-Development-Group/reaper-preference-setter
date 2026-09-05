@@ -1,5 +1,5 @@
 #!/bin/bash
-# Double-click this file in Finder to run the REAPER Preference Setter.
+# Double-click this file in Finder to run the SiRPS.
 # It will open a Terminal window and run the configurator.
 
 cd "$(dirname "$0")"

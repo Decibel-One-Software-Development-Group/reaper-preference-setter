@@ -15,7 +15,7 @@
 
 set -e
 
-echo "Building REAPER Preference Setter..."
+echo "Building SiRPS..."
 
 if [ "$(uname -s)" = "Darwin" ]; then
     PY_LIB="$(python3 -c 'import sysconfig, os; print(os.path.join(sysconfig.get_config_var("prefix"), "Python"))')"
@@ -33,15 +33,15 @@ if [ "$(uname -s)" = "Darwin" ]; then
         --windowed \
         --onedir \
         --noconfirm \
-        --name "REAPER Preference Setter" \
+        --name "SiRPS" \
         --icon icon.icns \
-        --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
+        --osx-bundle-identifier com.decibelone.sirps \
         --collect-all tkinterdnd2 \
         --target-architecture universal2 \
         configure_reaper.py
 
-    APP="dist/REAPER Preference Setter.app"
-    lipo -info "${APP}/Contents/MacOS/REAPER Preference Setter"
+    APP="dist/SiRPS.app"
+    lipo -info "${APP}/Contents/MacOS/SiRPS"
 
     echo ""
     echo "Build complete!"
@@ -52,13 +52,13 @@ else
     pyinstaller \
         --onefile \
         --console \
-        --name "REAPER Preference Setter" \
+        --name "SiRPS" \
         --collect-all tkinterdnd2 \
         configure_reaper.py
 
     echo ""
     echo "Build complete!"
-    echo "Executable: dist/REAPER Preference Setter"
+    echo "Executable: dist/SiRPS"
 fi
 
 echo ""

@@ -45,7 +45,7 @@ jobs:
     runs-on: macos-14
 
     env:
-      DMG: REAPER-Preference-Setter-macOS.dmg
+      DMG: SiRPS-macOS.dmg
       PY_VERSION: "3.12.10"
       PY_SHORT: "3.12"
 
@@ -74,17 +74,17 @@ jobs:
       - name: Build universal2 .app with PyInstaller
         run: |
           "$PYBIN" -m PyInstaller --windowed --onedir --noconfirm \
-            --name "REAPER Preference Setter" \
+            --name "SiRPS" \
             --icon icon.icns \
-            --osx-bundle-identifier com.nomismatt.reaper-preference-setter \
+            --osx-bundle-identifier com.decibelone.sirps \
             --collect-all tkinterdnd2 \
             --target-architecture universal2 \
             configure_reaper.py
 
       - name: Verify the app is universal
         run: |
-          APP="dist/REAPER Preference Setter.app"
-          MAIN="${APP}/Contents/MacOS/REAPER Preference Setter"
+          APP="dist/SiRPS.app"
+          MAIN="${APP}/Contents/MacOS/SiRPS"
           PYLIB="$(find "${APP}" -type f -name Python -print -quit)"
 
           for f in "${MAIN}" "${PYLIB}"; do
@@ -123,7 +123,7 @@ jobs:
 
       - name: Codesign .app bundle
         run: |
-          APP="dist/REAPER Preference Setter.app"
+          APP="dist/SiRPS.app"
           # Sign all .so and .dylib files first
           find "${APP}" -iname '*.so' -or -iname '*.dylib' | while read libfile; do
             codesign -s "${{ secrets.APPLE_CERTIFICATE_NAME }}" \
@@ -144,18 +144,18 @@ jobs:
           max_tries=5
           i=0
           until create-dmg \
-            --volname "REAPER Preference Setter" \
+            --volname "SiRPS" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --app-drop-link 450 185 \
-            --hide-extension "REAPER Preference Setter.app" \
+            --hide-extension "SiRPS.app" \
             "${DMG}" \
-            "dist/REAPER Preference Setter.app"
+            "dist/SiRPS.app"
           do
             if [ $i -eq $max_tries ]; then
               echo "create-dmg failed, falling back to hdiutil"
-              hdiutil create -volname "REAPER Preference Setter" \
-                -srcfolder "dist/REAPER Preference Setter.app" \
+              hdiutil create -volname "SiRPS" \
+                -srcfolder "dist/SiRPS.app" \
                 -ov -format UDZO \
                 "${DMG}"
               break
@@ -206,17 +206,17 @@ jobs:
         run: pip install pyinstaller tkinterdnd2
 
       - name: Build executable
-        run: pyinstaller --windowed --onefile --name "REAPER-Preference-Setter" --icon icon.ico --collect-all tkinterdnd2 configure_reaper.py
+        run: pyinstaller --windowed --onefile --name "SiRPS" --icon icon.ico --collect-all tkinterdnd2 configure_reaper.py
 
       - name: Zip exe with README
-        run: Compress-Archive -Path "dist/REAPER-Preference-Setter.exe", "README.md" -DestinationPath "REAPER-Preference-Setter-Windows.zip"
+        run: Compress-Archive -Path "dist/SiRPS.exe", "README.md" -DestinationPath "SiRPS-Windows.zip"
         shell: pwsh
 
       - name: Upload zip as run artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-zip
-          path: REAPER-Preference-Setter-Windows.zip
+          path: SiRPS-Windows.zip
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -224,4 +224,4 @@ jobs:
         with:
           draft: true
           files: |
-            REAPER-Preference-Setter-Windows.zip
+            SiRPS-Windows.zip
