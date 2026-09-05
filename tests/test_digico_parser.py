@@ -151,6 +151,36 @@ class DigicoParserTests(unittest.TestCase):
         self.assertEqual(rows[1:5], ["", "", "", ""])  # unrouted cols stay blank
         self.assertEqual(info["cards"], ["Tracks", "Trks"])
 
+    def test_madi_destinations_resolve(self):
+        """Recording to MADI, not a SoundGrid card. Console names those ports
+        with a device prefix ("1:MADI 1"), which a card-name rule anchored on a
+        non-digit rejects outright — the whole session then failed to place."""
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 4)],
+            inputs=[(0x2600, "R-Dnt 1"), (0x2601, "R-Dnt 2")],
+            strips=[(0x0100, "Oliver", 0x2600), (0x0101, "Claire", 0x2601)],
+            routings=[(0x2600, 0x4F01), (0x2601, 0x4F02)],
+        )
+        rows, info = parse(data, self.tmp)
+        self.assertEqual(rows, ["Oliver", "Claire"])
+        self.assertEqual(info["cards"], ["1:MADI"])
+        self.assertEqual(info["unplaced"], [])
+
+    def test_two_madi_ports_sharing_a_channel_are_refused(self):
+        """Two MADI ports both restart at channel 1, so both claim column 1.
+        Emitting one and dropping the other would be wrong invisibly."""
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 2), ("2:MADI", 0x5000, 1, 2)],
+            inputs=[(0x2600, "R-Dnt 1"), (0x2601, "R-Dnt 2")],
+            strips=[(0x0100, "Oliver", 0x2600), (0x0101, "Claire", 0x2601)],
+            routings=[(0x2600, 0x4F01), (0x2601, 0x5001)],
+        )
+        with self.assertRaises(cr.DigicoError) as caught:
+            parse(data, self.tmp)
+        self.assertIn("channel 1", str(caught.exception))
+
     def test_unplaceable_destination_is_reported_not_dropped(self):
         """A destination with no named port must surface, never vanish."""
         data = build_session(

@@ -25,7 +25,7 @@ Generate a single-column track-name CSV ready for the [J&T Live Recording Templa
 ### On the console (one-time prep)
 
 1. Open the **Copy Audio** screen
-2. Patch each console input you want to record to a Reaper card (Waves) output, in the order you want the tracks in Reaper
+2. Patch each console input you want to record to whatever the recorder is fed from — a Reaper/SoundGrid card (Waves, Trks) or a MADI port — in the order you want the tracks in Reaper
 3. Click **presets** → **Save** and name the preset exactly: `Extract for Reaper`
 4. Save the session, then export the `.ses` file to your computer (USB stick, share, etc.)
 
@@ -75,5 +75,6 @@ Without `tkinterdnd2`, the DiGiCo tab still works — just click the drop zone t
 ## Requirements
 
 - REAPER should be **closed** before applying preferences (the app will warn you if it's open)
+- Recording over MADI is supported, but only to a **single MADI port**. Each MADI port numbers its channels from 1, so two ports would both claim Reaper input 1 — the app refuses rather than guess the order. Record cards (Waves, Trks) number straight through, so two of those are fine.
 - DiGiCo session files must be from a **Quantum (SDQ) console running software v22 or later** (file format `vO`+). Older Quantum software, and SD7 / SD8 / SD9 consoles, use different file formats and aren't supported yet — the app detects this and tells you rather than producing wrong names.
 - macOS 11 Big Sur or later (Apple Silicon or Intel), or Windows 10+

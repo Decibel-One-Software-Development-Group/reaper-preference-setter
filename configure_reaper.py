@@ -399,7 +399,7 @@ def _extract_strips_from_ses(data, ports, preset_source_pids=None):
 # "Trks 3", "Tracks 65". The channel number in the name is authoritative: a rig
 # fitted with two cards names them straight through ("Trks 1-64" then
 # "Tracks 65-128"), so reading the number handles that with no special case.
-CARD_PORT_NAME_RE = re.compile(r"^(?P<family>\D.*?)\s+(?P<num>\d+)$")
+CARD_PORT_NAME_RE = re.compile(r"^(?P<family>(?:\d+:)?\D.*?)\s+(?P<num>\d+)$")
 
 
 def _split_card_name(name):
@@ -731,11 +731,31 @@ def parse_digico_session(ses_path, rtf_path=None):
             dst_cols[dst_pid] = col
     if not dst_cols:
         raise DigicoError(
-            "Could not work out which Reaper card outputs this Copy Audio "
-            "preset feeds.\n"
-            "The console doesn't appear to have a Reaper/SoundGrid card "
-            "configured."
+            "Could not work out which record outputs this Copy Audio preset "
+            "feeds.\n"
+            "The destinations don't look like a record card (Waves, Trks) or "
+            "a MADI port."
         )
+
+    # Record cards number straight through, so a rig can feed two of them
+    # ("Trks 1-64" then "Tracks 65-128") and still land on distinct columns.
+    # MADI doesn't: every port restarts at 1, so "1:MADI 1" and "2:MADI 1" both
+    # claim column 1 and one would silently overwrite the other. There's no way
+    # to know which order the interface concatenates the streams in, so refuse
+    # rather than emit a CSV that's wrong in a way nobody would spot.
+    col_owner = {}
+    for dst_pid, col in sorted(dst_cols.items()):
+        family = _split_card_name(ports.get(dst_pid - 1))[0]
+        if col_owner.setdefault(col, family) != family:
+            raise DigicoError(
+                f"This preset records to both '{col_owner[col]}' and "
+                f"'{family}', and they both use channel {col}.\n"
+                "There's no way to tell which Reaper input each one arrives "
+                "on, so the track order can't be worked out.\n"
+                "Record to one port, or to cards whose channels number "
+                "straight through."
+            )
+
     card_cols = _card_port_columns(ports, {d - 1 for d in dst_cols})
 
     # Primary path: extract strip names + input routes directly from the .ses.
