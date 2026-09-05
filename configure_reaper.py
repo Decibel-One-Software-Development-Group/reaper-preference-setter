@@ -157,8 +157,8 @@ def check_reaper_running():
 # tag before building, so a release can't report a stale number.
 APP_VERSION = "3.0.0"
 
-# Sparkle-format appcast on gh-pages. Release assets can't serve this: they 404
-# for an anonymous fetch on a private repo, and there's no stable "newest" URL.
+# Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
+# release can't serve this: there is no stable URL for "the newest build".
 APPCAST_URL = ("https://decibel-one-software-development-group.github.io"
                "/reaper-preference-setter/appcast.xml")
 DOWNLOADS_URL = ("https://decibel-one-software-development-group.github.io"

@@ -237,9 +237,9 @@ jobs:
           path: ${{ env.DMG }}
 
       # ── Appcast + gh-pages ────────────────────────────────────────────────
-      # The app checks for updates against appcast.xml on gh-pages. Release
-      # assets can't serve that: they 404 for an anonymous fetch on a private
-      # repo, and there is no stable URL for "the newest build".
+      # The app checks for updates against appcast.xml on gh-pages. A GitHub
+      # release can't serve that job: there's no stable URL for "the newest
+      # build", and the appcast has to sit beside the DMG it points at.
 
       - name: Materialize Sparkle EdDSA private key
         if: startsWith(github.ref, 'refs/tags/v')
