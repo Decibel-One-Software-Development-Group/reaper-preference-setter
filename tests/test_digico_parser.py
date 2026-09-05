@@ -55,12 +55,18 @@ def _port_record(pid, count, name, size_byte, stereo=False):
     return bytes(rec)
 
 
-def _strip_block(name, input_pid):
-    """Channel-strip snapshot carrying the strip's live input route."""
+def _strip_block(name, input_pid, alt_pid=None):
+    """Channel-strip snapshot carrying the strip's live input routes.
+
+    A DiGiCo channel has a main and an alt input; the console writes the alt
+    8 bytes after the main, same shape, different marker.
+    """
     name = name.encode("latin-1")
     block = cr.STRIP_BLOCK_HEADER + bytes([len(name)]) + name
     block += b"\x00" * 8
-    block += struct.pack("<H", input_pid) + b"\x00\x01"   # the route marker
+    block += struct.pack("<H", input_pid) + b"\x00\x01"   # main route marker
+    if alt_pid is not None:
+        block += b"\x00" * 4 + struct.pack("<H", alt_pid) + b"\x0e\x01"
     return block + b"\x00" * 64
 
 
@@ -87,10 +93,12 @@ def build_session(*, version=b"O", size_byte=0x79, cards, inputs, strips,
                   routings, model=b"SDQ", buses=()):
     """cards: [(family, first_pid, first_channel, count)]
        inputs: [(pid, name)]
-       strips: [(pid, name, input_pid)] or [(pid, name, input_pid, stereo)]
+       strips: (pid, name, input_pid[, stereo[, alt_input_pid]])
        routings: [(src_pid, dst_pid)]
        buses: [(name, out_port_pid)] — patched straight to a record output"""
-    strips = [s if len(s) == 4 else (*s, False) for s in strips]
+    strips = [(s[0], s[1], s[2],
+               s[3] if len(s) > 3 else False,
+               s[4] if len(s) > 4 else None) for s in strips]
     out = _header(model, version) + b"\x00" * 64
     for family, first_pid, first_ch, count in cards:
         for i in range(count):
@@ -98,10 +106,10 @@ def build_session(*, version=b"O", size_byte=0x79, cards, inputs, strips,
                                 f"{family} {first_ch + i}", size_byte)
     for pid, name in inputs:
         out += _port_record(pid, 1, name, size_byte)
-    for pid, name, _, stereo in strips:
+    for pid, name, _, stereo, _ in strips:
         out += _port_record(pid, 1, name, size_byte, stereo=stereo)
-    for _, name, input_pid, _ in strips:
-        out += _strip_block(name, input_pid)
+    for _, name, input_pid, _, alt_pid in strips:
+        out += _strip_block(name, input_pid, alt_pid)
     for name, out_pid in buses:
         out += _bus_block(name, out_pid)
     return out + _preset(routings)
@@ -232,8 +240,11 @@ class DigicoParserTests(unittest.TestCase):
         self.tmp.write_bytes(self._two_stream_session())
         sel = [t["first_pid"] for t in cr.list_record_targets(self.tmp)]
         rows, info = cr.parse_digico_session(self.tmp, selected_targets=sel)
-        self.assertEqual(rows, ["Oliver", "Claire", "", "", "Program L", "Program R"])
+        # Program L/R are two mono buses on the console; adjacent on the CSV
+        # they become a dotted pair so Reaper imports them as one stereo track.
+        self.assertEqual(rows, ["Oliver", "Claire", "", "", "Program.L", "Program.R"])
         self.assertEqual(info["output_patches"], 2)
+        self.assertEqual(info["lr_pairs"], 1)
 
     def test_preview_count_matches_the_csv_it_would_write(self):
         """The picker shows a track count before you convert. If that drifts
@@ -365,6 +376,65 @@ class DigicoParserTests(unittest.TestCase):
         self.assertEqual(rows, ["Able Trk2"])
         self.assertEqual(info["contested_inputs"], 1)
 
+    def test_alt_input_becomes_its_own_named_track(self):
+        """A principal's backup receiver is patched to the channel's alt input
+        and copied to its own Reaper track. Without reading the alt, that track
+        arrives as a bare port name."""
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 4)],
+            inputs=[(0x2600, "R-Dnt 1"), (0x2604, "R-Dnt 5")],
+            strips=[(0x0100, "Oliver", 0x2600, False, 0x2604)],
+            routings=[(0x2600, 0x4F01), (0x2604, 0x4F02)],
+        )
+        rows, info = parse(data, self.tmp)
+        self.assertEqual(rows, ["Oliver", "Oliver ALT"])
+        self.assertEqual(info["alt_inputs_named"], 1)
+        self.assertEqual(info["unnamed"], [])
+
+    def test_a_main_input_outranks_another_channels_alt(self):
+        """One port can be a channel's main and another's alt. It belongs to
+        the main — the alt is a backup patch, so naming the track after the
+        backup channel would be wrong."""
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 4)],
+            inputs=[(0x2600, "S1-1"), (0x2601, "S1-2")],
+            strips=[(0x0100, "Spare", 0x2600, False, 0x2601),
+                    (0x0101, "Claire", 0x2601)],
+            routings=[(0x2601, 0x4F01)],
+        )
+        rows, _ = parse(data, self.tmp)
+        self.assertEqual(rows, ["Claire"])
+
+    def test_lowest_numbered_strip_wins_a_contested_alt(self):
+        """A tech-listen channel can carry the same alt patch as the primary.
+        Same rule as main inputs: the lower channel is the primary."""
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 4)],
+            inputs=[(0x2600, "S1-1"), (0x2604, "S1-5")],
+            strips=[(0x0100, "Oliver", 0x2600, False, 0x2604),
+                    (0x0101, "Oliver Para", 0x2600, False, 0x2604)],
+            routings=[(0x2604, 0x4F01)],
+        )
+        rows, _ = parse(data, self.tmp)
+        self.assertEqual(rows, ["Oliver ALT"])
+
+    def test_stereo_alt_expands_to_L_and_R(self):
+        data = build_session(
+            version=b"O", size_byte=0x79,
+            cards=[("1:MADI", 0x4F00, 1, 4)],
+            inputs=[(0x2600, "S1-1"), (0x2601, "S1-2"),
+                    (0x2604, "S1-5"), (0x2605, "S1-6")],
+            strips=[(0x0100, "Keys 1", 0x2600, True, 0x2604)],
+            routings=[(0x2600, 0x4F01), (0x2601, 0x4F02),
+                      (0x2604, 0x4F03), (0x2605, 0x4F04)],
+        )
+        rows, _ = parse(data, self.tmp)
+        self.assertEqual(rows, ["Keys 1.L", "Keys 1.R",
+                                "Keys 1 ALT.L", "Keys 1 ALT.R"])
+
     def test_rejects_non_digico_and_non_quantum(self):
         with self.assertRaises(cr.DigicoError):
             parse(b"NOT A DIGICO FILE" + b"\x00" * 512, self.tmp)
@@ -382,6 +452,56 @@ class DigicoParserTests(unittest.TestCase):
         with self.assertRaises(cr.DigicoError) as ctx:
             parse(data, self.tmp)
         self.assertIn("port table", str(ctx.exception))
+
+
+class LRPairingTests(unittest.TestCase):
+    """Two mono channels named "X L" and "X R" are a stereo pair the console
+    happens to hold as two. Reaper pairs on a dotted side suffix."""
+
+    def test_adjacent_pair_gets_dotted(self):
+        rows, n = cr._pair_lr_suffixes(["Program L", "Program R"])
+        self.assertEqual(rows, ["Program.L", "Program.R"])
+        self.assertEqual(n, 1)
+
+    def test_underscore_and_hyphen_separators_count(self):
+        rows, n = cr._pair_lr_suffixes(["Mix_L", "Mix_R", "Sub-L", "Sub-R"])
+        self.assertEqual(rows, ["Mix.L", "Mix.R", "Sub.L", "Sub.R"])
+        self.assertEqual(n, 2)
+
+    def test_non_adjacent_is_left_alone(self):
+        """Reaper pairs consecutive tracks. An "X L" with its "X R" elsewhere
+        is not a pair, and dotting it would claim one that can't exist."""
+        rows, n = cr._pair_lr_suffixes(["Program L", "Talkback", "Program R"])
+        self.assertEqual(rows, ["Program L", "Talkback", "Program R"])
+        self.assertEqual(n, 0)
+
+    def test_r_before_l_is_not_a_pair(self):
+        rows, n = cr._pair_lr_suffixes(["Program R", "Program L"])
+        self.assertEqual(n, 0)
+
+    def test_already_dotted_names_are_untouched(self):
+        """Stereo strips already emit .L/.R — re-processing must not mangle."""
+        rows, n = cr._pair_lr_suffixes(["Keys 1.L", "Keys 1.R"])
+        self.assertEqual(rows, ["Keys 1.L", "Keys 1.R"])
+        self.assertEqual(n, 0)
+
+    def test_different_bases_are_not_paired(self):
+        rows, n = cr._pair_lr_suffixes(["Press Vox L", "Press Band R"])
+        self.assertEqual(n, 0)
+
+    def test_a_trailing_lr_in_the_name_is_not_a_side_suffix(self):
+        """"Band Rev 1 L/R" is one bus whose name ends in R — not a left side."""
+        rows, n = cr._pair_lr_suffixes(["Band Rev 1 L/R", "Band Rev 1 L/R R"])
+        self.assertEqual(n, 0)
+
+    def test_blank_rows_never_pair_across_a_gap(self):
+        rows, n = cr._pair_lr_suffixes(["Program L", "", "Program R"])
+        self.assertEqual(n, 0)
+
+    def test_a_lone_mono_beside_a_pair_survives(self):
+        rows, n = cr._pair_lr_suffixes(["Press FX L", "Press FX R", "Press Mono"])
+        self.assertEqual(rows, ["Press FX.L", "Press FX.R", "Press Mono"])
+        self.assertEqual(n, 1)
 
 
 class AppcastTests(unittest.TestCase):

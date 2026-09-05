@@ -177,6 +177,13 @@ PORT_RECORD_SIZE_BYTES = (0x79, 0x58, 0x50, 0x80, 0x60, 0x40)
 # Sessions store multiple snapshots; the most recent one (last in file order)
 # reflects the live state.
 STRIP_BLOCK_HEADER = bytes.fromhex("da003a0001000000")
+
+# Inside a strip's snapshot block an input route is (port_pid u16 LE)(marker).
+# A DiGiCo channel has two inputs, main and alt, and the console flips between
+# them — a radio mic and its backup receiver, typically. Same shape, different
+# marker, the alt sitting 8 bytes after the main.
+ROUTE_MAIN_MARKER = b"\x00\x01"
+ROUTE_ALT_MARKER = b"\x0e\x01"
 # A strip's input route points at a physical input port. Port names vary by
 # console I/O fit and by how the engineer labelled the racks, so match on shape
 # rather than an allow-list of names:
@@ -316,7 +323,7 @@ def _extract_strips_from_ses(data, ports, preset_source_pids=None):
     within ~250 bytes. The file holds multiple snapshots; the LAST occurrence
     is the live state.
 
-    Returns list of (strip_name, is_stereo, input_route_name, input_route_pid)
+    Returns list of (name, is_stereo, route_name, route_pid, alt_route_pid)
     where any field may be empty/None if not found. The pid is what pairs a
     stereo strip with its right-hand port — see `parse_digico_session`.
     """
@@ -388,6 +395,7 @@ def _extract_strips_from_ses(data, ports, preset_source_pids=None):
         needle = STRIP_BLOCK_HEADER + bytes([len(name_b)]) + name_b
         last_route = ""
         last_route_pid = None
+        last_alt_pid = None
         i = 0
         while True:
             j = data.find(needle, i)
@@ -395,18 +403,31 @@ def _extract_strips_from_ses(data, ports, preset_source_pids=None):
                 break
             i = j + 1
             name_end = j + 9 + len(name_b)
+            main_pid = alt_pid = None
             for delta in range(0, 250):
                 off = name_end + delta
                 if off + 4 > len(data):
                     break
-                if data[off + 2:off + 4] != b"\x00\x01":
+                marker = data[off + 2:off + 4]
+                if marker not in (ROUTE_MAIN_MARKER, ROUTE_ALT_MARKER):
                     continue
                 pid = struct.unpack("<H", data[off:off + 2])[0]
-                if pid in input_pids:
-                    last_route = ports[pid]
-                    last_route_pid = pid
+                if pid not in input_pids:
+                    continue
+                if marker == ROUTE_MAIN_MARKER and main_pid is None:
+                    main_pid = pid
+                elif marker == ROUTE_ALT_MARKER and alt_pid is None:
+                    alt_pid = pid
+                if main_pid is not None and alt_pid is not None:
                     break
-        out.append((name, is_stereo, last_route, last_route_pid))
+            # Take main and alt together, or not at all: a snapshot with a main
+            # and no alt means that channel's alt is unpatched now, and keeping
+            # an alt from an older snapshot would invent a patch.
+            if main_pid is not None:
+                last_route = ports[main_pid]
+                last_route_pid = main_pid
+                last_alt_pid = alt_pid
+        out.append((name, is_stereo, last_route, last_route_pid, last_alt_pid))
     return out
 
 
@@ -710,6 +731,40 @@ def _parse_preset_records(data, start, max_records=1024):
         yield (src_pid, dst_pid)
 
 
+# A channel named "Program L" with "Program R" next to it is a stereo pair the
+# console happens to hold as two mono channels. Reaper pairs tracks on a dotted
+# side suffix, so the space has to become a dot or the two import as unrelated
+# monos. Only a space, underscore or hyphen counts as the separator — a name
+# already ending ".L" is left alone, and one like "Band Rev 1 L/R" is not a side
+# suffix at all.
+LR_SUFFIX_RE = re.compile(r"^(?P<base>.+?)[ _-](?P<side>[LR])$")
+
+
+def _pair_lr_suffixes(rows):
+    """Dot the side suffix on adjacent L/R pairs. Returns (rows, pairs_found).
+
+    Adjacency is the point: Reaper pairs consecutive tracks, so an "X L" with
+    its "X R" somewhere else entirely is not a pair, and dotting it would claim
+    one that can't exist.
+    """
+    rows = list(rows)
+    pairs = 0
+    i = 0
+    while i < len(rows) - 1:
+        left = LR_SUFFIX_RE.match(rows[i] or "")
+        right = LR_SUFFIX_RE.match(rows[i + 1] or "")
+        if (left and right
+                and left["side"] == "L" and right["side"] == "R"
+                and left["base"] == right["base"]):
+            rows[i] = left["base"] + ".L"
+            rows[i + 1] = right["base"] + ".R"
+            pairs += 1
+            i += 2
+            continue
+        i += 1
+    return rows, pairs
+
+
 def _port_blocks(ports):
     """Group card-shaped ports into contiguous blocks.
 
@@ -911,17 +966,41 @@ def parse_digico_session(ses_path, rtf_path=None, selected_targets=None):
     # claims an input wins it.
     pid_to_label = {}
     contested = 0
-    for name, is_stereo, route, route_pid in ses_strips:
+    alt_named = 0
+
+    def claim(pid, label, suffix):
+        nonlocal contested
+        if pid in pid_to_label and pid_to_label[pid][0] != label:
+            contested += 1
+            return False
+        pid_to_label[pid] = (label, suffix)
+        return True
+
+    def sides_for(pid, is_stereo):
+        out = [(pid, ".L" if is_stereo else "")]
+        if is_stereo and pid + 1 in ports:
+            out.append((pid + 1, ".R"))
+        return out
+
+    # Main inputs first, across every strip, before any alt is considered. A
+    # port that is one channel's main and another's alt belongs to the main:
+    # the alt is a backup patch, so naming that track after the backup channel
+    # would be wrong even though both legitimately reference the port.
+    for name, is_stereo, route, route_pid, _alt_pid in ses_strips:
         if not (name and route) or route_pid is None:
             continue
-        sides = [(route_pid, ".L" if is_stereo else "")]
-        if is_stereo and route_pid + 1 in ports:
-            sides.append((route_pid + 1, ".R"))
-        for pid, suffix in sides:
-            if pid in pid_to_label and pid_to_label[pid][0] != name:
-                contested += 1
-                continue
-            pid_to_label[pid] = (name, suffix)
+        for pid, suffix in sides_for(route_pid, is_stereo):
+            claim(pid, name, suffix)
+
+    # Then alt inputs. A channel's backup — the second radio receiver on a
+    # principal, typically — is recorded on its own track, and without this it
+    # arrives as a bare port name because no strip claims it as a main.
+    for name, is_stereo, route, route_pid, alt_pid in ses_strips:
+        if not (name and route) or alt_pid is None:
+            continue
+        for pid, suffix in sides_for(alt_pid, is_stereo):
+            if pid not in pid_to_label and claim(pid, name + " ALT", suffix):
+                alt_named += 1
 
     # RTF strips are keyed by route string — the report has no pids. Kept
     # name-based so the RTF path behaves exactly as before.
@@ -984,6 +1063,7 @@ def parse_digico_session(ses_path, rtf_path=None, selected_targets=None):
 
     max_col = max(rows_by_col.keys(), default=0)
     rows = [rows_by_col.get(c, "") for c in range(1, max_col + 1)]
+    rows, lr_pairs = _pair_lr_suffixes(rows)
 
     info = {
         "count": len(raw_routings),
@@ -997,7 +1077,9 @@ def parse_digico_session(ses_path, rtf_path=None, selected_targets=None):
         ],
         "matched_name": matched_name,
         "was_fuzzy": was_fuzzy,
-        "ses_strips_routed": sum(1 for _, _, r, _pid in ses_strips if r),
+        "ses_strips_routed": sum(1 for st in ses_strips if st[2]),
+        "alt_inputs_named": alt_named,
+        "lr_pairs": lr_pairs,
         "contested_inputs": contested,
         "ses_strips_total": len(ses_strips),
         "output_patches": len(patched_cols),

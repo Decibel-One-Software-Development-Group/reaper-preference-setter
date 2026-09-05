@@ -47,7 +47,13 @@ Ports are laid out in the order the console lists them, each taking its full wid
 
 The racks Copy Audio *reads from* are deliberately left off the list. Reverb and aux returns get patched back out to those same Dante ports, and offering them would invite effects returns into your track list.
 
+### Names you get without doing anything
+
 Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R` rows automatically, provided your Copy Audio sends each side to consecutive outputs.
+
+**Alt inputs.** A DiGiCo channel has a main and an alt input, and a principal's backup receiver usually lives on the alt. If you copy that alt to its own Reaper track, it gets the channel's name with `ALT` on the end — `Oliver` on 1, `Oliver ALT` on 5. Without this the backup arrives as a bare port name, because no channel claims it as a main input. Where a port is one channel's main and another's alt, the main wins it.
+
+**Mono channels named L and R.** Two adjacent tracks called `Program L` and `Program R` become `Program.L` and `Program.R`, so Reaper imports them as one stereo track instead of two unrelated monos. Only adjacent pairs are joined — Reaper pairs consecutive tracks, so an `X L` with its `X R` elsewhere in the list is left as it is. A name that merely ends in R, like `Band Rev 1 L/R`, isn't touched.
 
 ## Download
 
