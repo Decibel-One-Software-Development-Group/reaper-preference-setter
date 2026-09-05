@@ -51,10 +51,12 @@ Stereo strips (marked with `s` in the session report) are expanded to `.L` / `.R
 
 ## Download
 
-Go to the [Releases page](https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases) and download for your platform:
+Download from the [SiRPS page](https://decibel-one-software-development-group.github.io/reaper-preference-setter/), or from the [Releases page](https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases):
 
-- **SiRPS-macOS.dmg** — macOS, universal (runs natively on both Apple Silicon and Intel Macs; signed and notarized)
-- **SiRPS-Windows.zip** — Windows
+- **SiRPS-‹version›-universal.dmg** — macOS, universal (runs natively on both Apple Silicon and Intel Macs; signed and notarized). `SiRPS-latest.dmg` on the SiRPS page always serves the newest build.
+- **SiRPS-‹version›-Windows.zip** — Windows
+
+The app checks for new versions itself: **Check for Updates…** sits in the application menu on macOS and under **Help** on Windows.
 
 No Python installation required.
 

@@ -13,6 +13,10 @@ import re
 import shutil
 import struct
 import sys
+import threading
+import urllib.request
+import webbrowser
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -148,6 +152,17 @@ def check_reaper_running():
 #   +6..7: count (u16 LE — matches the displayed number, e.g. 25 for "Dnt64 25")
 #   +8:    name length (u8)
 #   +9...: name (latin-1 chars)
+
+# Single source of truth for the version. CI rewrites this line to match the
+# tag before building, so a release can't report a stale number.
+APP_VERSION = "3.0.0"
+
+# Sparkle-format appcast on gh-pages. Release assets can't serve this: they 404
+# for an anonymous fetch on a private repo, and there's no stable "newest" URL.
+APPCAST_URL = ("https://decibel-one-software-development-group.github.io"
+               "/reaper-preference-setter/appcast.xml")
+DOWNLOADS_URL = ("https://decibel-one-software-development-group.github.io"
+                 "/reaper-preference-setter/")
 
 PRESET_NAME = b"Extract for Reaper"
 # 0x79 is what current Quantum software writes; 0x58 appears in older sessions
@@ -1561,6 +1576,77 @@ class DigicoTab(ttk.Frame):
 # App shell
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _version_tuple(v):
+    """'3.0.10' -> (3, 0, 10). Non-numeric parts sort as 0 rather than raising,
+    so a hand-typed or dev version can never crash the update check."""
+    out = []
+    for part in str(v).split("."):
+        digits = "".join(c for c in part if c.isdigit())
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
+def latest_version_from_appcast(xml_text):
+    """Newest version and its download URL from a Sparkle appcast.
+
+    Sparkle picks by version, not document order, so the newest item is not
+    necessarily the last one. Returns (version, url) or (None, None).
+    """
+    ns = {"sparkle": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
+    best = (None, None)
+    for item in ET.fromstring(xml_text).iter("item"):
+        node = item.find("sparkle:version", ns)
+        enc = item.find("enclosure")
+        version = (node.text or "").strip() if node is not None else ""
+        if not version and enc is not None:
+            version = enc.get("{%s}version" % ns["sparkle"], "").strip()
+        if not version:
+            continue
+        if best[0] is None or _version_tuple(version) > _version_tuple(best[0]):
+            best = (version, enc.get("url") if enc is not None else None)
+    return best
+
+
+def check_for_updates(parent=None, quiet=False):
+    """Ask the appcast whether there's a newer build, and offer the download.
+
+    The app is signed and notarized, and the appcast is served over HTTPS from
+    gh-pages, so the download the user is sent to is the one we published. The
+    install itself stays deliberately manual: replacing a running .app from
+    inside itself is where updaters go wrong, and this is a tool people open a
+    few times a show, not a daemon.
+    """
+    try:
+        with urllib.request.urlopen(APPCAST_URL, timeout=10) as resp:
+            latest, url = latest_version_from_appcast(resp.read().decode("utf-8"))
+    except Exception as e:
+        if not quiet:
+            messagebox.showwarning(
+                "Couldn't check for updates",
+                f"Couldn't reach the update feed.\n\n{type(e).__name__}: {e}")
+        return None
+
+    if not latest:
+        if not quiet:
+            messagebox.showwarning("Couldn't check for updates",
+                                   "The update feed didn't list any versions.")
+        return None
+
+    if _version_tuple(latest) <= _version_tuple(APP_VERSION):
+        if not quiet:
+            messagebox.showinfo(
+                "You're up to date",
+                f"SiRPS {APP_VERSION} is the latest version.")
+        return latest
+
+    if messagebox.askyesno(
+            "Update available",
+            f"SiRPS {latest} is available — you have {APP_VERSION}.\n\n"
+            "Open the download page?"):
+        webbrowser.open(url or DOWNLOADS_URL)
+    return latest
+
+
 class App:
     def __init__(self):
         # tkinterdnd2 ships its own Tk subclass that wires up DnD on the root window
@@ -1573,6 +1659,43 @@ class App:
 
         notebook.add(PreferencesTab(notebook), text="Reaper Preferences")
         notebook.add(DigicoTab(notebook), text="DiGiCo → Reaper CSV")
+
+        self._build_menu()
+
+    def _build_menu(self):
+        menubar = tk.Menu(self.root)
+
+        # On macOS a menu named "apple" is the application menu, so About and
+        # Check for Updates land where a Mac user looks for them. Elsewhere the
+        # same two items go under Help.
+        if sys.platform == "darwin":
+            app_menu = tk.Menu(menubar, name="apple")
+            menubar.add_cascade(menu=app_menu)
+            app_menu.add_command(label="About SiRPS", command=self._about)
+            app_menu.add_separator()
+            app_menu.add_command(label="Check for Updates…",
+                                 command=self._check_updates)
+        else:
+            help_menu = tk.Menu(menubar, tearoff=0)
+            menubar.add_cascade(label="Help", menu=help_menu)
+            help_menu.add_command(label="Check for Updates…",
+                                  command=self._check_updates)
+            help_menu.add_separator()
+            help_menu.add_command(label="About SiRPS", command=self._about)
+
+        self.root.config(menu=menubar)
+
+    def _about(self):
+        messagebox.showinfo(
+            "About SiRPS",
+            f"SiRPS {APP_VERSION}\n"
+            "REAPER preferences and DiGiCo session track lists.\n\n"
+            "Decibel One")
+
+    def _check_updates(self):
+        # Off the UI thread: a slow or unreachable feed would otherwise freeze
+        # the window until it times out.
+        threading.Thread(target=check_for_updates, daemon=True).start()
 
     def run(self):
         self.root.mainloop()

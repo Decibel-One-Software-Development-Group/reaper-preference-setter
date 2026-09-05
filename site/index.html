@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SiRPS</title>
+<meta name="description" content="SiRPS sets up REAPER the way you work, and builds your Reaper track list straight from a DiGiCo session. Free for macOS and Windows.">
+<meta name="theme-color" content="#7c3aed">
+<link rel="icon" type="image/png" href="icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="SiRPS">
+<meta property="og:description" content="REAPER preferences and DiGiCo session track lists, in one app. Free for macOS and Windows.">
+<meta property="og:image" content="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fbfbfa; --surface:#ffffff; --text:#181a19; --muted:#636966; --faint:#8d938f;
+  --border:#e5e8e6; --accent:#7c3aed; --accent-h:#6d28d9; --accent-bg:#f1eafe;
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 6px 20px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#15171a; --surface:#1e2125; --text:#eceded; --muted:#a4a9ad; --faint:#727880;
+    --border:#2b2f34; --accent:#a78bfa; --accent-h:#c4b5fd; --accent-bg:#241a3d;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 22px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:720px;margin:0 auto;padding:34px 24px 64px}
+a{color:var(--accent);text-decoration:none}
+h1{font-size:32px;font-weight:600;line-height:1.2;letter-spacing:-.015em;margin:0 0 12px}
+h2{font-size:15px;font-weight:600;margin:0 0 6px}
+p{margin:0}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.brand{display:flex;align-items:center;gap:11px}
+.logo{width:40px;height:40px;border-radius:11px;overflow:hidden;box-shadow:var(--shadow)}
+.logo img{width:40px;height:40px;display:block}
+.brand .name{font-size:18px;font-weight:600;line-height:1.15}
+.brand .sub{font-size:13px;color:var(--faint)}
+.pill{font-size:13px;font-weight:500;padding:5px 11px;border-radius:999px;background:var(--accent-bg);color:var(--accent)}
+.hero{text-align:center;padding:2.5rem 0 1.5rem}
+.hero p.lede{max-width:560px;margin:0 auto 24px;font-size:16px;color:var(--muted)}
+.dls{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.dl{display:inline-flex;align-items:center;gap:9px;background:var(--accent);color:#fff;font-size:16px;font-weight:500;padding:13px 26px;border-radius:10px;box-shadow:var(--shadow);transition:background .15s}
+.dl:hover{background:var(--accent-h)}
+.dl.alt{background:var(--surface);color:var(--accent);border:1px solid var(--border)}
+.dl.alt:hover{background:var(--accent-bg)}
+.cap{margin-top:14px;font-size:13px;color:var(--faint)}
+.req{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;box-shadow:var(--shadow);margin-top:2rem}
+.req ul{margin:0;padding-left:18px;font-size:14px;color:var(--muted)}
+.req li{margin:3px 0}
+.req + .req{margin-top:1rem}
+footer{margin-top:2.75rem;padding-top:1.25rem;border-top:1px solid var(--border);text-align:center;font-size:13px;color:var(--faint)}
+.d1sig{display:inline-flex;align-items:center;gap:.5rem;margin-bottom:.6rem}
+.d1sig .d1name{font-weight:600;font-size:15px;color:var(--text);letter-spacing:.2px}
+.d1sig .d1mark{display:block}
+@media(max-width:560px){h1{font-size:26px}.hero{padding:1.5rem 0 1rem}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <span class="logo"><img src="icon.png" width="40" height="40" alt=""></span>
+      <span><span class="name">SiRPS</span><br><span class="sub">by Decibel One</span></span>
+    </div>
+    <span class="pill">Free for macOS and Windows</span>
+  </div>
+
+  <section class="hero">
+    <h1>Your Reaper session, ready before you are</h1>
+    <p class="lede">Sets up REAPER the way you work, and builds your Reaper track list straight from a DiGiCo session — real channel names, stereo pairs, in patch order.</p>
+    <div class="dls">
+      <a class="dl" href="SiRPS-latest.dmg">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+        Download for macOS
+      </a>
+      <a class="dl alt" href="https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases/latest">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+        Download for Windows
+      </a>
+    </div>
+    <p class="cap">Free · signed and notarized · universal, Apple Silicon and Intel</p>
+  </section>
+
+  <div class="req">
+    <h2>What it does</h2>
+    <ul>
+      <li><strong>Preferences</strong> — startup behaviour, project template, default save and media paths, where peak files live. Set once, the same on every machine.</li>
+      <li><strong>DiGiCo → Reaper CSV</strong> — drop a <code>.ses</code> from the console and get a track-name CSV for the J&amp;T Live Recording Template's PATCH IMPORT. Channel names, stereo pairs and patch order come straight out of the session.</li>
+    </ul>
+  </div>
+
+  <div class="req">
+    <h2>What you need</h2>
+    <ul>
+      <li>For the CSV: a DiGiCo Quantum (SDQ) console on software v22 or later, with your Copy Audio routing saved as a preset named <code>Extract for Reaper</code></li>
+      <li>macOS 11 Big Sur or later (Apple Silicon or Intel), or Windows 10 or later</li>
+      <li>REAPER closed while preferences are applied — the app checks and tells you</li>
+    </ul>
+  </div>
+
+  <footer>
+    <div class="d1sig">
+      <svg class="d1mark" viewBox="0 0 428 819" width="19" height="36" role="img" aria-label="Decibel One logo">
+        <defs><clipPath id="d1siteone"><path d="M93,92 L191,92 L258,168 L258,748 L172,748 L172,170 L73,170 Z"/></clipPath></defs>
+        <path fill="#000000" d="M12,6 L341,6 A80,80 0 0 1 421,86 L421,728 A82,82 0 0 1 339,810 L12,810 A6,6 0 0 1 6,804 L6,12 A6,6 0 0 1 12,6 Z"/>
+        <g clip-path="url(#d1siteone)">
+          <rect x="58" y="94"  width="212" height="34" fill="#D51400"/>
+          <rect x="58" y="140" width="212" height="29" fill="#FFFF00"/>
+          <rect x="58" y="177" width="212" height="29" fill="#FFFF00"/>
+          <rect x="58" y="214" width="212" height="29" fill="#FFFF00"/>
+          <rect x="58" y="251" width="212" height="29" fill="#37AA00"/>
+          <rect x="58" y="288" width="212" height="29" fill="#37AA00"/>
+          <rect x="58" y="325" width="212" height="29" fill="#37AA00"/>
+          <rect x="58" y="362" width="212" height="29" fill="#37AA00"/>
+          <rect x="58" y="399" width="212" height="29" fill="#37AA00"/>
+          <rect x="58" y="436" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="473" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="510" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="547" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="584" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="621" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="658" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="695" width="212" height="29" fill="#2A8800"/>
+          <rect x="58" y="732" width="212" height="29" fill="#2A8800"/>
+        </g>
+      </svg>
+      <span class="d1name">Decibel One</span>
+    </div>
+    <div>Free · version <span id="sitever">3.0.0</span> · macOS 11 or later, or Windows 10 or later</div>
+  </footer>
+</main>
+</body>
+</html>

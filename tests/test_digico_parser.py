@@ -384,6 +384,46 @@ class DigicoParserTests(unittest.TestCase):
         self.assertIn("port table", str(ctx.exception))
 
 
+class AppcastTests(unittest.TestCase):
+    """The update check reads a Sparkle appcast. Sparkle picks by version, not
+    document order, so the newest entry is not necessarily the last one."""
+
+    def _appcast(self, *versions):
+        items = "".join(
+            f'<item><sparkle:version>{v}</sparkle:version>'
+            f'<enclosure url="https://example.invalid/SiRPS-{v}.dmg"/></item>'
+            for v in versions)
+        return ('<?xml version="1.0" encoding="utf-8"?>'
+                '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org'
+                '/xml-namespaces/sparkle"><channel>' + items +
+                "</channel></rss>")
+
+    def test_picks_the_highest_version_not_the_last_entry(self):
+        v, url = cr.latest_version_from_appcast(self._appcast("3.0.0", "3.0.10", "3.0.2"))
+        self.assertEqual(v, "3.0.10")
+        self.assertEqual(url, "https://example.invalid/SiRPS-3.0.10.dmg")
+
+    def test_version_compare_is_numeric_not_lexical(self):
+        self.assertGreater(cr._version_tuple("3.0.10"), cr._version_tuple("3.0.9"))
+        self.assertGreater(cr._version_tuple("3.1.0"), cr._version_tuple("3.0.99"))
+
+    def test_odd_version_strings_do_not_raise(self):
+        for v in ("0.0.0-dev", "", "v3", "3.0.0rc1"):
+            with self.subTest(version=v):
+                self.assertIsInstance(cr._version_tuple(v), tuple)
+
+    def test_empty_feed_reports_nothing_rather_than_raising(self):
+        self.assertEqual(cr.latest_version_from_appcast(self._appcast()), (None, None))
+
+    def test_shipped_version_is_the_one_with_release_notes(self):
+        """A tag builds from APP_VERSION; CI gates on release-notes/<version>.md.
+        If those drift, a release ships notes for a different version."""
+        notes = (Path(__file__).resolve().parent.parent
+                 / "release-notes" / f"{cr.APP_VERSION}.md")
+        self.assertTrue(notes.is_file() and notes.stat().st_size > 0,
+                        f"{notes} is missing or empty")
+
+
 class RealSessionTests(unittest.TestCase):
     """Opt-in checks against real sessions. Skipped unless DIGICO_SES_DIR is set."""
 

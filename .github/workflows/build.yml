@@ -12,19 +12,52 @@ on:
 permissions:
   contents: write
 
+# build.yml and deploy-site.yml both push to gh-pages, and two simultaneous
+# pushes wedge GitHub Pages. Queue rather than cancel — a site copy tweak must
+# never cancel an in-flight release.
+concurrency:
+  group: gh-pages-publish
+  cancel-in-progress: false
+
+env:
+  # Sparkle fetches the appcast and the DMG from gh-pages, not from the GitHub
+  # Release: Release assets 404 for the anonymous fetch an updater makes.
+  PAGES_BASE: "https://decibel-one-software-development-group.github.io/reaper-preference-setter"
+  MIN_OS: "11.0"
+
 jobs:
   create_release:
     name: Create Release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: v
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Require release notes
+        # Suite-wide gate: these notes are the release body and the description
+        # in the update window. A tag without them is a release nobody can read
+        # — fail before spending a build, not after.
+        run: |
+          NOTES="release-notes/${{ steps.v.outputs.version }}.md"
+          if [ ! -s "$NOTES" ]; then
+            echo "::error::$NOTES is missing or empty — write it (and prepend HISTORY.md) before tagging."
+            exit 1
+          fi
+          echo "release notes present ($(wc -l < "$NOTES") lines)"
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
+          name: SiRPS ${{ github.ref_name }}
           draft: true
           prerelease: false
-          generate_release_notes: true
+          body_path: release-notes/${{ steps.v.outputs.version }}.md
 
   build_macos:
     needs: create_release
@@ -45,12 +78,33 @@ jobs:
     runs-on: macos-14
 
     env:
-      DMG: SiRPS-macOS.dmg
       PY_VERSION: "3.12.10"
       PY_SHORT: "3.12"
+      SPARKLE_VERSION: "2.9.6"
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version + DMG name
+        # A manual run has no tag; it still builds, signs and notarizes so a
+        # build can be proved before tagging, but it ships nothing.
+        run: |
+          if [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/v}" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DMG=SiRPS-${VERSION}-universal.dmg" >> "$GITHUB_ENV"
+          echo "building SiRPS $VERSION"
+
+      - name: Pin the build version to the tag
+        # APP_VERSION is what the About box and the update check compare
+        # against. Aligning it to the tag here means a release can never report
+        # a stale number, and there's no second place to remember to edit.
+        run: |
+          sed -i '' -E "s/^APP_VERSION = \".*\"/APP_VERSION = \"${VERSION}\"/" configure_reaper.py
+          grep -m1 '^APP_VERSION' configure_reaper.py
 
       - name: Install universal2 Python from python.org
         run: |
@@ -182,6 +236,79 @@ jobs:
           name: macos-dmg
           path: ${{ env.DMG }}
 
+      # ── Appcast + gh-pages ────────────────────────────────────────────────
+      # The app checks for updates against appcast.xml on gh-pages. Release
+      # assets can't serve that: they 404 for an anonymous fetch on a private
+      # repo, and there is no stable URL for "the newest build".
+
+      - name: Materialize Sparkle EdDSA private key
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::SPARKLE_EDDSA_PRIVATE_KEY is not set for this repo."
+            echo "::error::Generate one with Sparkle's generate_keys, or reuse the suite key, and add it as a repository secret."
+            exit 1
+          fi
+          KEY_FILE="$RUNNER_TEMP/sparkle-ed.key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          echo "SPARKLE_PRIVATE_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
+
+      - name: Fetch Sparkle's sign_update
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          curl -fsSL -o sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p build/sparkle && tar -xJf sparkle.tar.xz -C build/sparkle
+          find build/sparkle -name sign_update -type f -exec chmod +x {} \;
+
+      - name: Fetch existing appcast (if any)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build
+          # Read the appcast from the gh-pages BRANCH, not the Pages CDN. The
+          # CDN lags the branch by up to ~10 min, so back-to-back releases would
+          # each append to a stale copy and silently drop entries in between.
+          gh api "repos/${{ github.repository }}/contents/appcast.xml?ref=gh-pages" \
+            -H "Accept: application/vnd.github.raw" > build/existing-appcast.xml 2>/dev/null || true
+          grep -q "<rss" build/existing-appcast.xml 2>/dev/null \
+            || { echo "no existing appcast (first release)"; rm -f build/existing-appcast.xml; }
+
+      - name: Generate + sign appcast entry
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export DMG="${DMG}"
+          export RELEASE_URL="${PAGES_BASE}/${DMG}"
+          export SIGN_UPDATE="$(find build/sparkle -name sign_update -type f | head -1)"
+          [ -x "$SIGN_UPDATE" ] || { echo "::error::sign_update not found in the Sparkle tarball"; exit 1; }
+          ./scripts/update-appcast.sh
+
+      - name: Stage appcast + DMG + site for gh-pages
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p build/gh-pages
+          cp build/appcast.xml build/gh-pages/appcast.xml
+          cp "${DMG}" build/gh-pages/
+          # Stable human-facing alias: one URL that always serves the newest
+          # build. The updater uses the versioned URL from the appcast.
+          cp "${DMG}" "build/gh-pages/SiRPS-latest.dmg"
+          cp -R site/. build/gh-pages/
+          sed -i '' "s|<span id=\"sitever\">[^<]*</span>|<span id=\"sitever\">${VERSION}</span>|" build/gh-pages/index.html
+
+      - name: Publish to gh-pages
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ github.token }}
+          publish_dir: build/gh-pages
+          publish_branch: gh-pages
+          keep_files: true
+          commit_message: "appcast + DMG: SiRPS ${{ github.ref_name }}"
+
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -202,6 +329,20 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Resolve version + pin it to the tag
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF -replace '^refs/tags/v',''
+          } else {
+            $v = '0.0.0-dev'
+          }
+          "VERSION=$v"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ZIP=SiRPS-$v-Windows.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          (Get-Content configure_reaper.py) -replace '^APP_VERSION = ".*"', "APP_VERSION = `"$v`"" |
+            Set-Content configure_reaper.py
+          Select-String -Path configure_reaper.py -Pattern '^APP_VERSION' | Select-Object -First 1
+
       - name: Install PyInstaller
         run: pip install pyinstaller tkinterdnd2
 
@@ -209,14 +350,14 @@ jobs:
         run: pyinstaller --windowed --onefile --name "SiRPS" --icon icon.ico --collect-all tkinterdnd2 configure_reaper.py
 
       - name: Zip exe with README
-        run: Compress-Archive -Path "dist/SiRPS.exe", "README.md" -DestinationPath "SiRPS-Windows.zip"
+        run: Compress-Archive -Path "dist/SiRPS.exe", "README.md" -DestinationPath "$env:ZIP"
         shell: pwsh
 
       - name: Upload zip as run artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-zip
-          path: SiRPS-Windows.zip
+          path: ${{ env.ZIP }}
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -224,4 +365,4 @@ jobs:
         with:
           draft: true
           files: |
-            SiRPS-Windows.zip
+            ${{ env.ZIP }}

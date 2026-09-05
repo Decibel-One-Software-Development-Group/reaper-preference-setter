@@ -1,0 +1,54 @@
+name: Deploy site
+
+# Publishes ONLY the landing page (site/) to gh-pages — no app build, sign or
+# notarize. For copy and design tweaks between releases, so a wording change
+# doesn't need a whole version. build.yml republishes the site on each version
+# tag too, and both use keep_files so the DMGs and appcast already on gh-pages
+# are never disturbed. Mirrors SiCam Control and SiChronize Server.
+on:
+  push:
+    branches: [main]
+    paths: ["site/**"]
+  workflow_dispatch:
+
+# Shared group with build.yml (the release workflow) so the two never push to
+# gh-pages at once — that race wedges GitHub Pages. Queue, don't cancel: a site
+# push must never cancel an in-flight release.
+concurrency:
+  group: gh-pages-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags to resolve the live version
+
+      - name: Resolve current version
+        id: v
+        run: |
+          VER=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+          [ -z "$VER" ] && VER="0.0.0"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Deploying site at version $VER"
+
+      - name: Stage site + inject version
+        run: |
+          mkdir -p build/site
+          cp -R site/. build/site/
+          # Replace the footer version placeholder with the live one.
+          sed -i "s|<span id=\"sitever\">[^<]*</span>|<span id=\"sitever\">${{ steps.v.outputs.version }}</span>|" build/site/index.html
+
+      - name: Publish to gh-pages (keep DMGs + appcast)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ github.token }}
+          publish_dir: build/site
+          publish_branch: gh-pages
+          keep_files: true
+          commit_message: "site: deploy v${{ steps.v.outputs.version }} (${{ github.sha }})"
