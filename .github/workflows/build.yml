@@ -155,6 +155,26 @@ jobs:
             | xargs -0 -n1 file 2>/dev/null \
             | grep 'Mach-O' | grep -v 'universal binary' || echo "  (none)"
 
+      - name: Stamp the bundle version
+        # PyInstaller writes CFBundleShortVersionString "0.0.0" and leaves
+        # CFBundleVersion empty. Pinning APP_VERSION only fixes what the app
+        # says about itself; Finder, "Get Info" and anything reading the bundle
+        # still saw 0.0.0. Must run BEFORE codesign — editing Info.plist after
+        # signing invalidates the signature.
+        run: |
+          PLIST="dist/SiRPS.app/Contents/Info.plist"
+          # CFBundleVersion must be digits and dots only, so a dev build's
+          # "0.0.0-dev" becomes "0.0.0" there while the display string keeps it.
+          NUM=$(printf '%s' "$VERSION" | sed -E 's/[^0-9.].*$//; s/\.$//')
+          [ -n "$NUM" ] || NUM="0.0.0"
+          for kv in "CFBundleShortVersionString:${VERSION}" "CFBundleVersion:${NUM}"; do
+            KEY="${kv%%:*}"; VAL="${kv#*:}"
+            /usr/libexec/PlistBuddy -c "Set :${KEY} ${VAL}" "$PLIST" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Add :${KEY} string ${VAL}" "$PLIST"
+          done
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
+
       - name: Import Apple Certificate
         run: |
           if security list-keychains | grep -q "github_build.keychain"; then
