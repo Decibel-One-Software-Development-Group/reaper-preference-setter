@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>SiRPS</title>
+    <link>https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter</link>
+    <description>SiRPS — REAPER preferences and DiGiCo session track lists (Decibel One)</description>
+    <language>en</language>
+    <item>
+      <title>SiRPS 3.0.0</title>
+      <link>https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases/tag/v3.0.0</link>
+      <sparkle:version>3.0.0</sparkle:version>
+      <sparkle:shortVersionString>3.0.0</sparkle:shortVersionString>
+      <description><![CDATA[
+<p>Now <strong>SiRPS</strong>, on the Decibel One pipeline: the suite icon, hand-written release notes, and a landing page of its own.</p>
+<h3>Records over MADI, not just a SoundGrid card</h3>
+<p>A session that records to MADI was refused outright — "The console doesn't appear to have a Reaper/SoundGrid card configured" — even when the Copy Audio preset was perfectly good. On MADI the record ports carry the console's device prefix, <code>1:MADI 1</code>, and the rule for a record port required the name to start with a letter. Nothing matched, no destination resolved to a Reaper input, and the whole session failed. MADI now reads the same as a SoundGrid card.</p>
+<h3>You choose the ports you record to</h3>
+<p>Copy Audio names its own destination, so the app finds that port by itself. It could never find a <strong>second</strong> stream — a program mix, press feeds, a matrix patched straight to an output — because nothing in Copy Audio refers to them. Those channels were simply missing from the CSV with nothing to say so.</p>
+<p>The DiGiCo tab now lists the record outputs it can see, with what is on each one, and you tick the ports you record to. The track count updates as you tick. Everything patched to any ticked port lands in one CSV.</p>
+<p>Ports are laid out in console order, each taking its full width, which is how the interface hands them to Reaper: MADI 1 holds inputs 1-64 even when only 1-62 are patched, and MADI 2 starts at 65. Unpatched channels come through as blank rows, and that is what keeps the numbering honest.</p>
+<p>The racks Copy Audio <strong>reads from</strong> are kept off the list on purpose. Reverb and aux returns get patched back out to those same Dante ports, so offering them would invite effects returns into the track list.</p>
+<p>Record cards are unaffected: two that number straight through — <code>Trks 1-64</code> then <code>Tracks 65-128</code> — still land where their own numbering says.</p>
+<h3>More tracks arrive with their real name</h3>
+<ul>
+<li>Anything the Copy Audio preset copies is now an input by definition. Channels patched from ports an engineer had renamed outright — <code>P.A Trk 1 L</code>, <code>KCmp 1</code>, <code>Orch Sum L/R</code> — resolved no route at all and fell back to a raw port name. On one 130-track session that moved 105 channels to 124.</li>
+<li>Stereo channels pair by port order instead of by bumping a trailing number in the port name, so a channel on a named stagebox socket (<code>S4-4 K1 L</code>) gets its <code>.R</code> row rather than leaving a raw port name on the next track.</li>
+<li>Where several channels legitimately claim one input — a tech-listen channel fed from the same playback as the primary — the lowest-numbered channel wins it, that being the primary by desk convention.</li>
+<li>Sessions from older Quantum software (<code>vM</code>) parse, and a rig whose record card isn't called "Waves" is no longer assumed away.</li>
+</ul>
+<h3>Backup mics and mono pairs arrive named</h3>
+<p>A DiGiCo channel has two inputs, main and alt, and a principal's backup receiver sits on the alt. Only the main was ever read, so a backup copied to its own Reaper track came through as a bare port name — <code>R-Dnt 5</code> where the channel above it said <code>Oliver</code>. Alt inputs are read now and named after their channel: <code>Oliver ALT</code>. Where a port is one channel's main and another's alt the main wins it, and where a tech-listen channel carries the same alt as the primary, the lower-numbered channel wins — the same rule main inputs already followed.</p>
+<p>Two adjacent mono tracks called <code>Program L</code> and <code>Program R</code> are now written <code>Program.L</code> and <code>Program.R</code>, so Reaper imports them as one stereo track rather than two unrelated monos. Only adjacent pairs are joined, because those are the only ones Reaper can pair; a name that merely ends in R, like <code>Band Rev 1 L/R</code>, is left alone.</p>
+<p>On the session this was built against, those two changes together took the CSV from five raw port names and five unpaired mono pairs to every track named and every pair joined.</p>
+<h3>Looks like the suite, ships like the suite</h3>
+<p>The element-tile icon and the SiRPS name. Signed, notarized and stapled as before, on both Apple Silicon and Intel from one universal download.</p>
+<p>There is a page of its own now, and the app has an <strong>About</strong> box and <strong>Check for Updates…</strong> — in the application menu on macOS, under Help on Windows. It reads the same Sparkle appcast the rest of the suite publishes, tells you when a newer build exists, and opens the download. Installing stays a drag to Applications: replacing a running app from inside itself is where updaters go wrong, and this is a tool you open a few times a show.</p>
+<p>Release notes are written by hand now, and a tag without them fails the build rather than shipping a release nobody can read.</p>
+<hr/>
+<h3>Version history</h3>
+<ul>
+<li><strong>3.0.0</strong> — Now SiRPS, with the suite icon. Records over MADI as well as a SoundGrid card, and you pick which ports you record to, so a second stream carrying outputs patched straight to it — program and press feeds — comes through in the same CSV. More channels resolve to their real name: Copy Audio sources count as inputs, stereo pairs by port order, the lowest-numbered channel wins a shared input, alt inputs arrive named (Oliver ALT), adjacent mono L/R pairs are dotted so Reaper makes them stereo, and older 'vM' sessions parse.</li>
+</ul>
+<p>Releases before 3.0.0 predate this ledger; their notes are on the Releases page.</p>
+      ]]></description>
+      <pubDate>Sun, 06 Sep 2026 00:36:11 +0000</pubDate>
+      <enclosure
+        url="https://decibel-one-software-development-group.github.io/reaper-preference-setter/SiRPS-3.0.0-universal.dmg"
+        sparkle:version="3.0.0"
+        sparkle:shortVersionString="3.0.0"
+        length="19449741"
+        type="application/octet-stream"
+        sparkle:edSignature="qfSaNuFmwKosMZkOQj+LuG7x7K7hInxjm9hJUczowdJY8njNGknBQaCHbHfgdoyfWdpwOrlWnJhJKk6YqyDWDg=="/>
+      <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+    </item>
+  </channel>
+</rss>
