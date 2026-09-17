@@ -35,6 +35,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
         --noconfirm \
         --name "SiRPS" \
         --icon icon.icns \
+        --add-data "reascripts:reascripts" \
         --osx-bundle-identifier com.decibelone.sirps \
         --collect-all tkinterdnd2 \
         --target-architecture universal2 \

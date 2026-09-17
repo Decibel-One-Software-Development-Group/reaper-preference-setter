@@ -45,6 +45,41 @@ LOADLASTPROJ_NEW_PROJECT = 19
 LOADLASTPROJ_LAST_ACTIVE = 16
 
 
+REASCRIPT_DIR = "reascripts"
+REASCRIPT_NAME = "SiRPS New Show Project.lua"
+
+
+def bundled_file(*parts):
+    """A file shipped beside the app. PyInstaller unpacks bundled data under
+    sys._MEIPASS; running from source it sits next to this module."""
+    base = getattr(sys, "_MEIPASS", None)
+    root = Path(base) if base else Path(__file__).resolve().parent
+    return root.joinpath(*parts)
+
+
+def install_reascript(resource_path):
+    """Copy the New Show Project script into REAPER's Scripts folder.
+
+    REAPER applies its save-as wildcard pattern to the project it makes at
+    launch, but not to File > New Project, so a show started mid-session lands
+    unnamed. The script does the naming itself and needs no REAPER extension.
+
+    Returns (installed_path, None) or (None, reason). Never raises: failing to
+    install a convenience must not fail the preferences that did apply.
+    """
+    try:
+        source = bundled_file(REASCRIPT_DIR, REASCRIPT_NAME)
+        if not source.is_file():
+            return None, f"{REASCRIPT_NAME} is missing from this build"
+        target_dir = Path(resource_path) / "Scripts"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / REASCRIPT_NAME
+        shutil.copyfile(source, target)
+        return target, None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
 def ini_int(value, default=0):
     """An ini value REAPER wrote is normally an int, but a hand-edited or absent
     one must not crash Apply."""
@@ -1504,12 +1539,29 @@ class PreferencesTab(ttk.Frame):
 
         write_ini(self.ini_path, self.lines)
 
+        script_path, script_error = install_reascript(self.resource_path)
+        if script_path:
+            changes.append(f"Installed ReaScript: {REASCRIPT_NAME}")
+
         summary = "\n".join(f"  • {c}" for c in changes)
+        if script_path:
+            script_note = (
+                f"\n\nREAPER's save-as pattern only names the project it makes "
+                f"at launch, not File > New Project. A script that does name it "
+                f"was installed:\n\n"
+                f"  Actions > Show action list > find "
+                f'"Script: {REASCRIPT_NAME}"\n'
+                f"  Bind it to a key, and use it instead of File > New Project."
+            )
+        else:
+            script_note = f"\n\nCould not install the ReaScript: {script_error}"
+
         messagebox.showinfo(
             "Settings Applied",
             f"The following settings were applied:\n\n{summary}\n\n"
             f"Backup saved to:\n{backup_path.name}\n\n"
             f"Launch REAPER to verify your settings."
+            f"{script_note}"
         )
 
 

@@ -20,6 +20,16 @@ What it configures:
 - **Peak files** — Stores new `.reapeaks` in a `peaks/` subfolder relative to media, so the audio folder holds only audio
 - **Record-arm new tracks** — New tracks arrive armed, ready to record
 
+### New Show Project (ReaScript)
+
+Applying preferences also installs a script into REAPER's `Scripts` folder: **SiRPS New Show Project**.
+
+REAPER applies its save-as pattern to the project it creates at launch, but not to **File → New Project** — so a show started mid-session arrives unnamed. This script does the naming itself. It shows you the name it's going to use (editable), then creates a dated folder, starts a new project from your template, points the media folder at `Audio`, and saves — all without touching the file dialog, so it needs no REAPER extension.
+
+Bind it once: **Actions → Show action list**, find `Script: SiRPS New Show Project.lua`, give it a shortcut, and use it instead of File → New Project.
+
+It won't overwrite an existing project, and cancelling the dialog changes nothing.
+
 ## DiGiCo → Reaper CSV tab
 
 Generate a single-column track-name CSV ready for the [J&T Live Recording Template](https://www.jandtaudiosolutions.com/) PATCH IMPORT button — names and patches your Reaper tracks to match the Copy Audio routing from your DiGiCo SDQ console.

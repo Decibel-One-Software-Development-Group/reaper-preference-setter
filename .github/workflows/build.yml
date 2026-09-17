@@ -130,6 +130,7 @@ jobs:
           "$PYBIN" -m PyInstaller --windowed --onedir --noconfirm \
             --name "SiRPS" \
             --icon icon.icns \
+            --add-data "reascripts:reascripts" \
             --osx-bundle-identifier com.decibelone.sirps \
             --collect-all tkinterdnd2 \
             --target-architecture universal2 \
@@ -367,7 +368,7 @@ jobs:
         run: pip install pyinstaller tkinterdnd2
 
       - name: Build executable
-        run: pyinstaller --windowed --onefile --name "SiRPS" --icon icon.ico --collect-all tkinterdnd2 configure_reaper.py
+        run: pyinstaller --windowed --onefile --name "SiRPS" --icon icon.ico --add-data "reascripts;reascripts" --collect-all tkinterdnd2 configure_reaper.py
 
       - name: Zip exe with README
         run: Compress-Archive -Path "dist/SiRPS.exe", "README.md" -DestinationPath "$env:ZIP"

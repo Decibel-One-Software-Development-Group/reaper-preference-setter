@@ -12,8 +12,11 @@ Those checks are skipped when the folder isn't there.
 Run:  python3 tests/test_digico_parser.py
 """
 import os
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from datetime import datetime
@@ -548,6 +551,51 @@ class PreferenceKeyTests(unittest.TestCase):
         peakcachegenmode, whose default is already 3 — a guaranteed no-op."""
         self.assertEqual(3 | 1, 3)                  # why it never did anything
         self.assertEqual(cr.set_bit(0, 4, True), 4)  # altpeaks: off -> peaks/
+
+
+class ReaScriptTests(unittest.TestCase):
+    """The New Show Project script is shipped and installed by the app, so it
+    has to be in the build and it has to be valid Lua."""
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def test_the_script_is_where_the_app_looks_for_it(self):
+        self.assertTrue(
+            cr.bundled_file(cr.REASCRIPT_DIR, cr.REASCRIPT_NAME).is_file(),
+            "the app would report it missing from the build")
+
+    def test_install_writes_it_into_reapers_scripts_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            target, err = cr.install_reascript(Path(d))
+            self.assertIsNone(err)
+            self.assertEqual(target, Path(d) / "Scripts" / cr.REASCRIPT_NAME)
+            self.assertTrue(target.is_file())
+            self.assertIn("SiRPS New Show Project", target.read_text())
+
+    def test_install_reports_failure_instead_of_raising(self):
+        """Apply must still report the preferences that did land."""
+        target, err = cr.install_reascript(Path("/dev/null/nope"))
+        self.assertIsNone(target)
+        self.assertTrue(err)
+
+    def test_install_overwrites_an_older_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            scripts = Path(d) / "Scripts"
+            scripts.mkdir()
+            (scripts / cr.REASCRIPT_NAME).write_text("-- stale version\n")
+            target, err = cr.install_reascript(Path(d))
+            self.assertIsNone(err)
+            self.assertNotIn("stale version", target.read_text())
+
+    def test_lua_checks_pass(self):
+        """Runs tests/test_reascript.lua, which exercises the script against a
+        fake REAPER API — cancel, overwrite refusal, path-separator stripping."""
+        if not shutil.which("lua"):
+            self.skipTest("lua not installed (brew install lua)")
+        result = subprocess.run(["lua", "tests/test_reascript.lua"],
+                                cwd=self.ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         f"\n{result.stdout}\n{result.stderr}")
 
 
 class SavePatternTests(unittest.TestCase):
