@@ -155,7 +155,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -163,6 +163,64 @@ APPCAST_URL = ("https://decibel-one-software-development-group.github.io"
                "/reaper-preference-setter/appcast.xml")
 DOWNLOADS_URL = ("https://decibel-one-software-development-group.github.io"
                  "/reaper-preference-setter/")
+
+# REAPER's "Default save-as wildcard pattern" (Preferences / Project). Its Save
+# New Project dialog opens on this, resolved. The wildcards are REAPER's own and
+# REAPER expands them, not us — its built-in recording pattern uses the same
+# vocabulary ($year2$month$day_$hour$minute).
+SAVE_PATTERN_DATE_FORMATS = [
+    ("2026-09-17_1430", "$year-$month-$day_$hour$minute"),
+    ("2026-09-17_14-30", "$year-$month-$day_$hour-$minute"),
+    ("2026-09-17", "$year-$month-$day"),
+    ("20260917_1430", "$year$month$day_$hour$minute"),
+    ("17-09-2026_1430", "$day-$month-$year_$hour$minute"),
+    ("(no date)", ""),
+]
+DEFAULT_SAVE_PATTERN_FORMAT = "$year-$month-$day_$hour$minute"
+
+
+def build_save_pattern(prefix, wildcards):
+    """Join a production prefix and a date pattern into one REAPER pattern."""
+    prefix = (prefix or "").strip()
+    if prefix and wildcards:
+        return f"{prefix}_{wildcards}"
+    return prefix or wildcards or ""
+
+
+def split_save_pattern(pattern):
+    """Read a stored pattern back into (prefix, wildcards).
+
+    Longest suffix first: "$year-$month-$day_$hour$minute" itself ends with
+    "$year-$month-$day", so matching shortest-first would strip the wrong half
+    and leave wildcards sitting in the prefix box.
+    """
+    pattern = (pattern or "").strip()
+    known = sorted((w for _, w in SAVE_PATTERN_DATE_FORMATS if w),
+                   key=len, reverse=True)
+    for wildcards in known:
+        if pattern == wildcards:
+            return "", wildcards
+        if pattern.endswith(wildcards):
+            return pattern[: -len(wildcards)].rstrip("_- "), wildcards
+    return pattern, ""
+
+
+def preview_save_pattern(pattern, now=None):
+    """Resolve the wildcards the way REAPER will, so the name can be shown
+    before it is written rather than discovered at the next save."""
+    now = now or datetime.now()
+    # $year2 before $year, or "$year2" resolves to the full year with a stray 2.
+    subs = (
+        ("$year2", now.strftime("%y")), ("$year", now.strftime("%Y")),
+        ("$month", now.strftime("%m")), ("$day", now.strftime("%d")),
+        ("$hour", now.strftime("%H")), ("$minute", now.strftime("%M")),
+        ("$second", now.strftime("%S")),
+    )
+    out = pattern or ""
+    for token, value in subs:
+        out = out.replace(token, value)
+    return out
+
 
 PRESET_NAME = b"Extract for Reaper"
 # 0x79 is what current Quantum software writes; 0x58 appears in older sessions
@@ -1116,6 +1174,7 @@ class PreferencesTab(ttk.Frame):
         keys = (
             "loadlastproj", "defsavepath", "newprojtmpl",
             "projdefrecpath", "peakcachegenmode", "saveopts",
+            "projsaveaspattern",
         )
         for k in keys:
             self.current[k] = get_value(self.lines, self.section_start, self.section_end, k) or ""
@@ -1164,6 +1223,51 @@ class PreferencesTab(ttk.Frame):
             row=row, column=0, columnspan=2, sticky="ew", padx=(0, 5))
         ttk.Button(self, text="Browse...", command=self._browse_savepath).grid(row=row, column=2)
         row += 1
+
+        # New project name — REAPER's save-as wildcard pattern. Its Save New
+        # Project dialog opens on this, so a prefix plus a timestamp means every
+        # show is named and dated without typing it at the dialog.
+        ttk.Label(self, text="New project name (fills REAPER's save dialog):").grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(15, 5))
+        row += 1
+
+        name_row = ttk.Frame(self)
+        name_row.grid(row=row, column=0, columnspan=3, sticky="ew")
+        ttk.Label(name_row, text="Prefix:").grid(row=0, column=0, sticky="w")
+        stored_pattern = self.current.get("projsaveaspattern", "")
+        stored_prefix, stored_fmt = split_save_pattern(stored_pattern)
+        self.saveprefix_var = tk.StringVar(value=stored_prefix)
+        ttk.Entry(name_row, textvariable=self.saveprefix_var, width=22).grid(
+            row=0, column=1, sticky="w", padx=(8, 18))
+        ttk.Label(name_row, text="Date:").grid(row=0, column=2, sticky="w")
+        labels = [lbl for lbl, _ in SAVE_PATTERN_DATE_FORMATS]
+        default_label = next(lbl for lbl, w in SAVE_PATTERN_DATE_FORMATS
+                             if w == DEFAULT_SAVE_PATTERN_FORMAT)
+        # An unset key and a pattern deliberately carrying no date both leave
+        # stored_fmt empty, and empty also matches the "(no date)" entry. Only
+        # trust it when something was actually stored, or a first run would
+        # suggest no date at all rather than the recommended format.
+        current_label = (
+            next((lbl for lbl, w in SAVE_PATTERN_DATE_FORMATS if w == stored_fmt),
+                 default_label)
+            if stored_pattern.strip() else default_label)
+        self.savedatefmt_var = tk.StringVar(value=current_label)
+        ttk.Combobox(name_row, textvariable=self.savedatefmt_var, values=labels,
+                     state="readonly", width=18).grid(row=0, column=3, sticky="w",
+                                                      padx=(8, 0))
+        row += 1
+
+        self.savename_preview_var = tk.StringVar(value="")
+        ttk.Label(self, textvariable=self.savename_preview_var,
+                  foreground="#0a5").grid(row=row, column=0, columnspan=3,
+                                          sticky="w", pady=(6, 0))
+        row += 1
+        # Live, so the name is confirmed here rather than at the next save.
+        self.saveprefix_var.trace_add(
+            "write", lambda *a: self._refresh_savename_preview())
+        self.savedatefmt_var.trace_add(
+            "write", lambda *a: self._refresh_savename_preview())
+        self._refresh_savename_preview()
 
         # Project template
         ttk.Label(self, text="Default project template:").grid(row=row, column=0, sticky="w", pady=(15, 5))
@@ -1220,6 +1324,24 @@ class PreferencesTab(ttk.Frame):
         btn_frame = ttk.Frame(self)
         btn_frame.grid(row=row, column=0, columnspan=3, pady=(20, 0))
         ttk.Button(btn_frame, text="Apply", command=self._apply).pack(side="left", padx=5)
+
+    def _save_pattern_wildcards(self):
+        label = self.savedatefmt_var.get()
+        return next((w for lbl, w in SAVE_PATTERN_DATE_FORMATS if lbl == label),
+                    DEFAULT_SAVE_PATTERN_FORMAT)
+
+    def _current_save_pattern(self):
+        return build_save_pattern(self.saveprefix_var.get(),
+                                  self._save_pattern_wildcards())
+
+    def _refresh_savename_preview(self):
+        pattern = self._current_save_pattern()
+        if not pattern:
+            self.savename_preview_var.set(
+                "→  (REAPER's own default — set a prefix or a date to change it)")
+            return
+        self.savename_preview_var.set(
+            f"→  {preview_save_pattern(pattern)}.rpp")
 
     def _browse_savepath(self):
         path = filedialog.askdirectory(title="Select default project save path")
@@ -1284,6 +1406,14 @@ class PreferencesTab(ttk.Frame):
             self.lines, self.section_end = set_value(
                 self.lines, self.section_start, self.section_end, "saveopts", str(saveopts_val))
             changes.append("Prompt to save on new project")
+
+        save_pattern = self._current_save_pattern()
+        if save_pattern:
+            self.lines, self.section_end = set_value(
+                self.lines, self.section_start, self.section_end,
+                "projsaveaspattern", save_pattern)
+            changes.append(
+                f"New project name: {preview_save_pattern(save_pattern)}")
 
         recpath = self.recpath_var.get().strip()
         if recpath:

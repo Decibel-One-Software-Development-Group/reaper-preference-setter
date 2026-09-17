@@ -1,3 +1,8 @@
+- **3.1.0** — REAPER's Save New Project dialog opens on a name you chose: a
+  production prefix plus a date format, written to REAPER's own save-as wildcard
+  pattern and previewed as you set it. The bundle reports its real version to
+  Finder instead of 0.0.0.
+
 - **3.0.0** — Now SiRPS, with the suite icon. Records over MADI as well as a
   SoundGrid card, and you pick which ports you record to, so a second stream
   carrying outputs patched straight to it — program and press feeds — comes

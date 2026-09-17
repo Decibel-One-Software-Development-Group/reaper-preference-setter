@@ -16,6 +16,7 @@ import struct
 import sys
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 # The module builds a Tk UI at import time; stub tkinter so this runs headless.
@@ -502,6 +503,69 @@ class LRPairingTests(unittest.TestCase):
         rows, n = cr._pair_lr_suffixes(["Press FX L", "Press FX R", "Press Mono"])
         self.assertEqual(rows, ["Press FX.L", "Press FX.R", "Press Mono"])
         self.assertEqual(n, 1)
+
+
+class SavePatternTests(unittest.TestCase):
+    """REAPER's Save New Project dialog opens on projsaveaspattern, with
+    REAPER's own wildcards. The app composes and decomposes that pattern."""
+
+    WHEN = datetime(2026, 9, 17, 14, 30, 45)
+
+    def test_prefix_and_date_join_with_an_underscore(self):
+        self.assertEqual(
+            cr.build_save_pattern("MHET", "$year-$month-$day_$hour$minute"),
+            "MHET_$year-$month-$day_$hour$minute")
+
+    def test_either_half_alone_needs_no_separator(self):
+        self.assertEqual(cr.build_save_pattern("MHET", ""), "MHET")
+        self.assertEqual(cr.build_save_pattern("", "$year"), "$year")
+        self.assertEqual(cr.build_save_pattern("", ""), "")
+
+    def test_every_offered_format_round_trips(self):
+        """The tab reads the stored pattern back into the two fields. A format
+        that didn't survive the round trip would silently reset on next launch."""
+        for label, wildcards in cr.SAVE_PATTERN_DATE_FORMATS:
+            with self.subTest(format=label):
+                pattern = cr.build_save_pattern("MHET", wildcards)
+                prefix, fmt = cr.split_save_pattern(pattern)
+                self.assertEqual(prefix, "MHET")
+                self.assertEqual(fmt, wildcards)
+
+    def test_longest_wildcard_suffix_wins(self):
+        """"$year-$month-$day_$hour$minute" itself ends with "$year-$month-$day",
+        so a shortest-first match would leave wildcards stuck in the prefix."""
+        prefix, fmt = cr.split_save_pattern("MHET_$year-$month-$day_$hour$minute")
+        self.assertEqual(prefix, "MHET")
+        self.assertNotIn("$", prefix)
+
+    def test_a_hand_written_pattern_is_preserved_not_mangled(self):
+        """Someone may have typed their own pattern into REAPER. Round-tripping
+        it must not quietly rewrite it."""
+        pattern = "Show_$year2$month$day-$rectag"
+        prefix, fmt = cr.split_save_pattern(pattern)
+        self.assertEqual(cr.build_save_pattern(prefix, fmt), pattern)
+
+    def test_year2_resolves_before_year(self):
+        """Replacing $year first would turn "$year2" into "2026" plus a stray 2."""
+        self.assertEqual(cr.preview_save_pattern("$year2", now=self.WHEN), "26")
+        self.assertEqual(cr.preview_save_pattern("$year", now=self.WHEN), "2026")
+
+    def test_preview_matches_what_reaper_will_write(self):
+        cases = {
+            "MHET_$year-$month-$day_$hour$minute": "MHET_2026-09-17_1430",
+            "MHET_$year$month$day_$hour$minute": "MHET_20260917_1430",
+            "MHET_$day-$month-$year_$hour$minute": "MHET_17-09-2026_1430",
+            "MHET": "MHET",
+        }
+        for pattern, expected in cases.items():
+            with self.subTest(pattern=pattern):
+                self.assertEqual(
+                    cr.preview_save_pattern(pattern, now=self.WHEN), expected)
+
+    def test_unknown_wildcards_are_left_for_reaper(self):
+        """$rectag is REAPER's to resolve, not ours — leave it in place."""
+        self.assertEqual(
+            cr.preview_save_pattern("$year-$rectag", now=self.WHEN), "2026-$rectag")
 
 
 class AppcastTests(unittest.TestCase):
