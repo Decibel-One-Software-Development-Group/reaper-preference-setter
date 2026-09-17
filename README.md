@@ -11,13 +11,14 @@ The app has two tabs:
 
 What it configures:
 
-- **Startup behavior** — Opens a new project on launch (instead of loading the last project)
+- **Startup behaviour** — Opens a new project on launch, or reopens the last active one
 - **Project template** — Sets a default `.RPP` template for new projects
 - **Prompt to save** — Ensures you're always prompted to save new projects
 - **Default save path** — Sets where new projects are saved
 - **New project name** — Pre-fills REAPER's Save New Project dialog with a prefix and a timestamp. Type `MHET`, pick a date format, and the dialog opens on `MHET_2026-09-17_1430`. The name is shown as you set it, and it's stored in REAPER's own save-as wildcard pattern, so it survives whether or not you use this app again
 - **Media path** — Sets the relative media recording folder (e.g., `Audio`)
-- **Peak files** — Stores `.reapeaks` in a `peaks/` subfolder relative to media
+- **Peak files** — Stores new `.reapeaks` in a `peaks/` subfolder relative to media, so the audio folder holds only audio
+- **Record-arm new tracks** — New tracks arrive armed, ready to record
 
 ## DiGiCo → Reaper CSV tab
 

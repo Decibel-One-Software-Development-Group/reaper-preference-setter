@@ -505,6 +505,51 @@ class LRPairingTests(unittest.TestCase):
         self.assertEqual(n, 1)
 
 
+class PreferenceKeyTests(unittest.TestCase):
+    """Every one of these was a real defect: the app wrote a plausible-looking
+    key that controlled something else, then reported success."""
+
+    def test_bit_toggle_leaves_other_bits_alone(self):
+        """deftrackrecflags carries the record-config dropdown in bits 16-128.
+        Touching record-arm must not disturb them."""
+        self.assertEqual(cr.set_bit(256, 1, True), 257)
+        self.assertEqual(cr.set_bit(257, 1, False), 256)
+        self.assertEqual(cr.set_bit(0, 4, True), 4)
+        self.assertEqual(cr.set_bit(7, 4, False), 3)
+
+    def test_toggling_twice_returns_to_where_it_started(self):
+        for start in (0, 3, 4, 256, 257, 511):
+            for bit in (1, 2, 4):
+                with self.subTest(value=start, bit=bit):
+                    on = cr.set_bit(start, bit, True)
+                    self.assertEqual(cr.set_bit(on, bit, bool(start & bit)), start)
+
+    def test_ini_int_survives_junk(self):
+        """A hand-edited or empty value must not crash Apply."""
+        self.assertEqual(cr.ini_int("19"), 19)
+        self.assertEqual(cr.ini_int(" 4 "), 4)
+        for junk in ("", None, "abc", "1.5"):
+            with self.subTest(value=junk):
+                self.assertEqual(cr.ini_int(junk), 0)
+        self.assertEqual(cr.ini_int("", 19), 19)
+
+    def test_loadlastproj_is_an_enum_not_a_bitfield(self):
+        """The old code did `19 & ~1 & ~2`, which is 16 — "last active project",
+        the exact opposite of the checkbox's promise."""
+        self.assertEqual(19 & ~1 & ~2, 16)          # the bug, pinned
+        self.assertEqual(cr.LOADLASTPROJ_NEW_PROJECT, 19)
+        self.assertEqual(cr.LOADLASTPROJ_LAST_ACTIVE, 16)
+        self.assertNotEqual(cr.LOADLASTPROJ_NEW_PROJECT,
+                            cr.LOADLASTPROJ_NEW_PROJECT & ~1 & ~2)
+
+    def test_peak_location_is_not_peak_generation(self):
+        """peakcachegenmode only has &1 (generate on import) and &2 (generate on
+        project load). Location is altpeaks &4. The old code ORed bit 1 into
+        peakcachegenmode, whose default is already 3 — a guaranteed no-op."""
+        self.assertEqual(3 | 1, 3)                  # why it never did anything
+        self.assertEqual(cr.set_bit(0, 4, True), 4)  # altpeaks: off -> peaks/
+
+
 class SavePatternTests(unittest.TestCase):
     """REAPER's Save New Project dialog opens on projsaveaspattern, with
     REAPER's own wildcards. The app composes and decomposes that pattern."""

@@ -36,6 +36,29 @@ except ImportError:
 # REAPER ini utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
+# loadlastproj is an ENUM, not a bitfield:
+#   16 Last active project   17 Last project tabs   18 New project (ignore
+#   default template)   19 New project   20 Prompt
+# It was being masked as bits (& ~1 & ~2), which turns 19 into 16 — so ticking
+# "open a new project on startup" set "last active project", the opposite.
+LOADLASTPROJ_NEW_PROJECT = 19
+LOADLASTPROJ_LAST_ACTIVE = 16
+
+
+def ini_int(value, default=0):
+    """An ini value REAPER wrote is normally an int, but a hand-edited or absent
+    one must not crash Apply."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def set_bit(value, bit, on):
+    """Toggle one bit of a REAPER bitfield, leaving every other bit alone."""
+    return (value | bit) if on else (value & ~bit)
+
+
 def find_reaper_ini():
     """Find reaper.ini based on platform."""
     if sys.platform == "darwin":
@@ -155,7 +178,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.2.0"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -1174,7 +1197,7 @@ class PreferencesTab(ttk.Frame):
         keys = (
             "loadlastproj", "defsavepath", "newprojtmpl",
             "projdefrecpath", "peakcachegenmode", "saveopts",
-            "projsaveaspattern",
+            "projsaveaspattern", "altpeaks", "deftrackrecflags", "newprojdo",
         )
         for k in keys:
             self.current[k] = get_value(self.lines, self.section_start, self.section_end, k) or ""
@@ -1303,21 +1326,37 @@ class PreferencesTab(ttk.Frame):
             row=row, column=0, columnspan=3, sticky="ew", pady=15)
         row += 1
 
-        self.startup_var = tk.BooleanVar(value=True)
+        self.startup_var = tk.BooleanVar(
+            value=ini_int(self.current["loadlastproj"],
+                          LOADLASTPROJ_NEW_PROJECT) in (18, 19))
         ttk.Checkbutton(self, text="Open new project on startup", variable=self.startup_var).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
-        self.prompt_save_var = tk.BooleanVar(value=True)
+        self.prompt_save_var = tk.BooleanVar(
+            value=bool(ini_int(self.current["newprojdo"]) & 1))
         ttk.Checkbutton(self, text="Prompt to save on new project", variable=self.prompt_save_var).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
-        self.peaks_var = tk.BooleanVar(value=True)
+        # These two mirror what REAPER currently has, and toggle it either way —
+        # a checkbox that can only ever switch something on is a lie about what
+        # unticking it does.
+        self.peaks_var = tk.BooleanVar(
+            value=bool(ini_int(self.current["altpeaks"]) & 4))
         ttk.Checkbutton(
             self,
-            text="Put peak files in peaks/ subfolder relative to media",
+            text="Put new peak files in peaks/ subfolder relative to media",
             variable=self.peaks_var,
+        ).grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
+        row += 1
+
+        self.recarm_var = tk.BooleanVar(
+            value=bool(ini_int(self.current["deftrackrecflags"]) & 1))
+        ttk.Checkbutton(
+            self,
+            text="Record-arm new tracks",
+            variable=self.recarm_var,
         ).grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
@@ -1372,12 +1411,17 @@ class PreferencesTab(ttk.Frame):
 
         changes = []
 
-        if self.startup_var.get():
-            current = get_value(self.lines, self.section_start, self.section_end, "loadlastproj")
-            new_val = (int(current) & ~1 & ~2) if current else 0
+        want_new = (LOADLASTPROJ_NEW_PROJECT if self.startup_var.get()
+                    else LOADLASTPROJ_LAST_ACTIVE)
+        current = ini_int(get_value(self.lines, self.section_start,
+                                    self.section_end, "loadlastproj"),
+                          LOADLASTPROJ_NEW_PROJECT)
+        if current != want_new:
             self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end, "loadlastproj", str(new_val))
-            changes.append("Open new project on startup")
+                self.lines, self.section_start, self.section_end,
+                "loadlastproj", str(want_new))
+        changes.append("Startup: open a new project" if self.startup_var.get()
+                       else "Startup: reopen the last active project")
 
         savepath = self.savepath_var.get().strip()
         if savepath:
@@ -1394,18 +1438,28 @@ class PreferencesTab(ttk.Frame):
                     tmpl_value = str(rel)
                 except ValueError:
                     tmpl_value = str(template_path)
+                # newprojtmpl being set IS what makes REAPER use the template.
+                # This also wrote newprojdo=1, which is the prompt-to-save
+                # bitfield, not a "use the template" flag — so picking a
+                # template silently rewrote an unrelated preference.
                 self.lines, self.section_end = set_value(
-                    self.lines, self.section_start, self.section_end, "newprojtmpl", tmpl_value)
-                self.lines, self.section_end = set_value(
-                    self.lines, self.section_start, self.section_end, "newprojdo", "1")
+                    self.lines, self.section_start, self.section_end,
+                    "newprojtmpl", tmpl_value)
                 changes.append(f"Template: {template_name}")
 
-        if self.prompt_save_var.get():
-            current = get_value(self.lines, self.section_start, self.section_end, "saveopts")
-            saveopts_val = (int(current) | 1) if current else 1
+        # newprojdo &1 = "Prompt to save on new project". This used to write
+        # saveopts &1, which is "when overwriting a project file, rename the old
+        # one to .rpp-bak" — an unrelated setting silently toggled instead.
+        current = ini_int(get_value(self.lines, self.section_start,
+                                    self.section_end, "newprojdo"))
+        wanted = set_bit(current, 1, self.prompt_save_var.get())
+        if wanted != current:
             self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end, "saveopts", str(saveopts_val))
-            changes.append("Prompt to save on new project")
+                self.lines, self.section_start, self.section_end,
+                "newprojdo", str(wanted))
+        changes.append("Prompt to save on new project"
+                       if self.prompt_save_var.get()
+                       else "No prompt to save on new project")
 
         save_pattern = self._current_save_pattern()
         if save_pattern:
@@ -1421,12 +1475,32 @@ class PreferencesTab(ttk.Frame):
                 self.lines, self.section_start, self.section_end, "projdefrecpath", recpath)
             changes.append(f"Media path: {recpath}")
 
-        if self.peaks_var.get():
-            current = get_value(self.lines, self.section_start, self.section_end, "peakcachegenmode")
-            peak_val = (int(current) | 1) if current else 3
+        # Peak LOCATION is altpeaks &4 ("Put new peak files in peaks/ subfolder
+        # relative to media"). This used to write peakcachegenmode, which only
+        # says WHEN peaks are generated — on import and on project load — so the
+        # checkbox reported success and changed nothing, on any machine.
+        current = ini_int(get_value(self.lines, self.section_start,
+                                    self.section_end, "altpeaks"))
+        wanted = set_bit(current, 4, self.peaks_var.get())
+        if wanted != current:
             self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end, "peakcachegenmode", str(peak_val))
-            changes.append("Peaks in subfolder relative to media")
+                self.lines, self.section_start, self.section_end,
+                "altpeaks", str(wanted))
+        changes.append("Peaks in peaks/ subfolder relative to media"
+                       if self.peaks_var.get() else "Peaks alongside media")
+
+        # deftrackrecflags &1 = Record Arm (Preferences / Track/Send Defaults).
+        # Bit 1 only: the same field carries the record-config dropdown in bits
+        # 16-128, which must survive untouched.
+        current = ini_int(get_value(self.lines, self.section_start,
+                                    self.section_end, "deftrackrecflags"))
+        wanted = set_bit(current, 1, self.recarm_var.get())
+        if wanted != current:
+            self.lines, self.section_end = set_value(
+                self.lines, self.section_start, self.section_end,
+                "deftrackrecflags", str(wanted))
+        changes.append("New tracks record-armed" if self.recarm_var.get()
+                       else "New tracks not record-armed")
 
         write_ini(self.ini_path, self.lines)
 
