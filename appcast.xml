@@ -134,5 +134,42 @@
         sparkle:edSignature="0lrRe4yCzn6ylMTq0bgscx2S7Kai1vKFpNimrFimG7Lc0zXlkt88pUR9qM+uYRNzeMx5jUZ4quF3o9VZIGGcBA=="/>
       <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
     </item>
+    <item>
+      <title>SiRPS 3.2.1</title>
+      <link>https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases/tag/v3.2.1</link>
+      <sparkle:version>3.2.1</sparkle:version>
+      <sparkle:shortVersionString>3.2.1</sparkle:shortVersionString>
+      <description><![CDATA[
+<h3>Check for Updates works</h3>
+<p>In every build since it was added, <strong>Check for Updates…</strong> reported "Couldn't reach the update feed" with <code>CERTIFICATE_VERIFY_FAILED</code>. The feed was fine; the app had nothing to check its certificate against.</p>
+<p>HTTPS needs a bundle of trusted certificate authorities. A packaged app's OpenSSL looks for that file at a path baked in from the machine it was *built* on — a Python installation that does not exist on yours — so every secure request failed. It never showed during development, because Apple's own Python trusts the macOS keychain regardless of any file.</p>
+<p>The app now carries its own certificate bundle and uses it for the update check. Verification is still fully on; nothing about the check was loosened.</p>
+<p>One consequence worth knowing: because the check was broken in 3.0.0 through 3.2.0, those versions cannot tell you about this one. If you are on any of them, download 3.2.1 once from the SiRPS page — after that, updates will find you.</p>
+<hr/>
+<h3>Version history</h3>
+<ul>
+<li><strong>3.2.1</strong> — Check for Updates works. Every earlier build failed with CERTIFICATE_VERIFY_FAILED because the packaged app had no certificate bundle to verify against; it now ships its own. 3.0.0–3.2.0 cannot announce this release, so download it once by hand.</li>
+</ul>
+<ul>
+<li><strong>3.2.0</strong> — Three of the four Preferences settings were writing the wrong REAPER key and reporting success: peak location (the <code>peaks/</code> subfolder), startup behaviour (which set the opposite of its checkbox), and prompt-to-save. All corrected against REAPER's documented keys. New: record-arm new tracks. The checkboxes now reflect what REAPER actually has and toggle it either way. Also installs a New Show Project ReaScript, which names a mid-session project the way REAPER only does at launch, and sets a chosen template's own record path to match the media folder, which otherwise overrides it.</li>
+</ul>
+<ul>
+<li><strong>3.1.0</strong> — REAPER's Save New Project dialog opens on a name you chose: a production prefix plus a date format, written to REAPER's own save-as wildcard pattern and previewed as you set it. The bundle reports its real version to Finder instead of 0.0.0.</li>
+</ul>
+<ul>
+<li><strong>3.0.0</strong> — Now SiRPS, with the suite icon. Records over MADI as well as a SoundGrid card, and you pick which ports you record to, so a second stream carrying outputs patched straight to it — program and press feeds — comes through in the same CSV. More channels resolve to their real name: Copy Audio sources count as inputs, stereo pairs by port order, the lowest-numbered channel wins a shared input, alt inputs arrive named (Oliver ALT), adjacent mono L/R pairs are dotted so Reaper makes them stereo, and older 'vM' sessions parse.</li>
+</ul>
+<p>Releases before 3.0.0 predate this ledger; their notes are on the Releases page.</p>
+      ]]></description>
+      <pubDate>Fri, 18 Sep 2026 13:51:09 +0000</pubDate>
+      <enclosure
+        url="https://decibel-one-software-development-group.github.io/reaper-preference-setter/SiRPS-3.2.1-universal.dmg"
+        sparkle:version="3.2.1"
+        sparkle:shortVersionString="3.2.1"
+        length="19594215"
+        type="application/octet-stream"
+        sparkle:edSignature="L8poRNvv8s8l63RzW0zFTdpyMqFSz4B/qJvQaibcFipTQQVKA38cM0+DMkL6DTgc6RzZOgDbcbwoy5J67i89BA=="/>
+      <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+    </item>
   </channel>
 </rss>
