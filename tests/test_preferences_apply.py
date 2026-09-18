@@ -43,7 +43,10 @@ for _n in ("Frame", "Label", "Button", "Checkbutton", "LabelFrame", "Separator",
 _tk.StringVar = _tk.BooleanVar = _Var
 _fd = types.ModuleType("tkinter.filedialog"); _mb = types.ModuleType("tkinter.messagebox")
 _fd.askdirectory = _fd.askopenfilename = lambda *a, **k: ""
-_mb.showwarning = _mb.showerror = _mb.showinfo = lambda *a, **k: None
+DIALOGS = []
+_mb.showwarning = lambda t, m="", **k: DIALOGS.append(("warning", t, m))
+_mb.showerror = lambda t, m="", **k: DIALOGS.append(("error", t, m))
+_mb.showinfo = lambda t, m="", **k: DIALOGS.append(("info", t, m))
 _tk.ttk, _tk.filedialog, _tk.messagebox = _ttk, _fd, _mb
 for _k, _v in (("tkinter", _tk), ("tkinter.ttk", _ttk),
                ("tkinter.filedialog", _fd), ("tkinter.messagebox", _mb)):
@@ -77,11 +80,16 @@ class ApplyOnAFreshMachine(unittest.TestCase):
         cr.find_reaper_resource_path = lambda: self.res
         cr.find_reaper_ini = lambda: self.res / "reaper.ini"
         cr.check_reaper_running = lambda: False
+        DIALOGS.clear()
 
     def tearDown(self):
         (cr.find_reaper_ini, cr.find_reaper_resource_path,
          cr.check_reaper_running) = self._saved
         self._dir.cleanup()
+
+    def _report(self):
+        """The last dialog Apply showed: (kind, title, message)."""
+        return DIALOGS[-1]
 
     def _machine(self, template_value, template_file):
         template_file.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +162,116 @@ class ApplyOnAFreshMachine(unittest.TestCase):
         _, ini = self._apply(startup_var=False)
         self.assertEqual(ini("loadlastproj"), "16")          # last active
 
+
+    # ── double-checking: nothing is trusted, everything is read back ─────────
+
+    def test_a_clean_apply_reports_every_setting_verified(self):
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        self._apply()
+        kind, title, message = self._report()
+        self.assertEqual(kind, "info")
+        self.assertEqual(title, "Settings applied and verified")
+        self.assertNotIn("✗", message)
+        for fragment in ("Startup: open a new project", "Media path: Audio/",
+                         "Template J&T.RPP records to Audio/",
+                         "ReaScript installed"):
+            self.assertIn(f"✓  {fragment}", message)
+
+    def test_a_duplicated_key_is_collapsed_to_the_value_written(self):
+        """REAPER may read the other copy. Leave exactly one."""
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        ini = self.res / "reaper.ini"
+        ini.write_text(ini.read_text() + "loadlastproj=16\naltpeaks=0\n")
+        self._apply()
+        text = ini.read_text()
+        self.assertEqual(text.count("loadlastproj="), 1)
+        self.assertIn("loadlastproj=19", text)
+        self.assertEqual(text.count("altpeaks="), 1)
+        self.assertIn("altpeaks=4", text)
+
+    def test_a_setting_that_already_looked_right_is_still_enforced(self):
+        """The first copy already says 19; a later duplicate says 16. Skipping
+        the write because the first copy "looked right" would leave REAPER free
+        to read 16."""
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        ini = self.res / "reaper.ini"
+        ini.write_text(ini.read_text().replace("loadlastproj=16",
+                                               "loadlastproj=19\nloadlastproj=16"))
+        self._apply()
+        self.assertEqual(ini.read_text().count("loadlastproj="), 1)
+        self.assertIn("loadlastproj=19", ini.read_text())
+
+    def test_a_template_already_correct_is_still_checked(self):
+        """It is read back and reported, not assumed."""
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        t.write_text(t.read_text().replace('RECORD_PATH "" ""', 'RECORD_PATH "Audio" ""'))
+        self._apply()
+        self.assertIn("✓  Template J&T.RPP records to Audio/", self._report()[2])
+
+    def test_a_template_that_cannot_be_fixed_is_reported_not_hidden(self):
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        t.chmod(0o444)
+        try:
+            self._apply()
+        finally:
+            t.chmod(0o644)
+        kind, title, message = self._report()
+        self.assertEqual(kind, "warning")
+        self.assertEqual(title, "Some settings did not stick")
+        self.assertIn("✗  Template J&T.RPP records to Audio/", message)
+
+    def test_nothing_is_written_while_reaper_is_running(self):
+        """REAPER writes its in-memory preferences back when it quits, which
+        would silently undo the lot."""
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        ini = self.res / "reaper.ini"
+        before = ini.read_text()
+        tab = cr.PreferencesTab(None)
+        cr.check_reaper_running = lambda: True      # REAPER launched after opening
+        tab._apply()
+        self.assertEqual(ini.read_text(), before)
+        self.assertEqual(list(self.res.glob("reaper.ini.backup_*")), [])
+        self.assertEqual(self._report()[1], "Quit REAPER first")
+        self.assertIn('RECORD_PATH "" ""', t.read_text())
+
+    def test_a_template_wrongly_believed_fixed_is_caught_by_the_read_back(self):
+        """The case the read-back exists for: the fix reports success without
+        error, but the file on disk still records to the project folder. Only
+        reading the template back can see that."""
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        real = cr.set_template_record_path
+        cr.set_template_record_path = lambda path, media: (True, None)
+        try:
+            self._apply()
+        finally:
+            cr.set_template_record_path = real
+        kind, title, message = self._report()
+        self.assertEqual(title, "Some settings did not stick")
+        self.assertIn("✗  Template J&T.RPP records to Audio/", message)
+        self.assertIn('records to ""', message)
+
+    def test_an_ini_setting_wrongly_believed_written_is_caught(self):
+        """Same for reaper.ini: if the write silently goes nowhere, the report
+        must say so rather than list what was intended."""
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        real = cr.write_ini
+        cr.write_ini = lambda path, lines: None       # the write is lost
+        try:
+            self._apply()
+        finally:
+            cr.write_ini = real
+        kind, title, message = self._report()
+        self.assertEqual(title, "Some settings did not stick")
+        self.assertIn("✗  Startup: open a new project", message)
+        self.assertIn("loadlastproj=16", message)
 
 if __name__ == "__main__":
     unittest.main()

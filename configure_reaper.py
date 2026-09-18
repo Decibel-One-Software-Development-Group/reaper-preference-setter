@@ -89,6 +89,36 @@ def install_reascript(resource_path):
 RECORD_PATH_RE = re.compile(r'^(\s*RECORD_PATH )"[^"]*"( ".*")$', re.M)
 
 
+RECORD_PATH_VALUE_RE = re.compile(r'^\s*RECORD_PATH "([^"]*)"', re.M)
+
+
+def verify_template_record_path(template_path, media_path):
+    """Read a template back off disk and check it records to media_path."""
+    label = f"Template {Path(template_path).name} records to {media_path}/"
+    try:
+        text = Path(template_path).read_text(errors="surrogateescape")
+    except Exception as e:
+        return (label, False, f"could not read it: {type(e).__name__}")
+    match = RECORD_PATH_VALUE_RE.search(text)
+    if not match:
+        return (label, False, "it has no RECORD_PATH line")
+    if match.group(1) != media_path:
+        return (label, False, f'it records to "{match.group(1)}"')
+    return (label, True, "")
+
+
+def verify_reascript(installed_path):
+    """Check the installed script is byte-for-byte the one this build ships."""
+    label = f"ReaScript installed: {REASCRIPT_NAME}"
+    try:
+        source = bundled_file(REASCRIPT_DIR, REASCRIPT_NAME)
+        if Path(installed_path).read_bytes() != source.read_bytes():
+            return (label, False, "the installed copy differs from this build's")
+        return (label, True, "")
+    except Exception as e:
+        return (label, False, f"{type(e).__name__}: {e}")
+
+
 def resolve_template(value, resource_path):
     """The project template file REAPER will open for a newprojtmpl value.
 
@@ -222,13 +252,63 @@ def get_value(lines, section_start, section_end, key):
 
 
 def set_value(lines, section_start, section_end, key, value):
+    """Set key=value in the section, leaving exactly one copy of the key.
+
+    A key that appears twice (hand edits, another tool) meant this updated the
+    first copy, get_value read that same copy back as proof, and REAPER could
+    be reading the other one. Later duplicates are removed so the value
+    written is the only value there is to read.
+    """
     prefix = f"{key}="
-    for i in range(section_start, section_end):
+    found = False
+    i = section_start
+    while i < section_end:
         if lines[i].startswith(prefix):
+            if found:
+                del lines[i]
+                section_end -= 1
+                continue
             lines[i] = f"{key}={value}\n"
-            return lines, section_end
-    lines.insert(section_end, f"{key}={value}\n")
-    return lines, section_end + 1
+            found = True
+        i += 1
+    if not found:
+        lines.insert(section_end, f"{key}={value}\n")
+        section_end += 1
+    return lines, section_end
+
+
+def count_key(lines, section_start, section_end, key):
+    prefix = f"{key}="
+    return sum(1 for i in range(section_start, section_end)
+               if lines[i].startswith(prefix))
+
+
+def verify_ini(ini_path, expectations):
+    """Read reaper.ini back off disk and check each expectation.
+
+    expectations: [(label, key, check)] where check(value) -> bool.
+    Returns [(label, ok, detail)]. A key present more than once fails even when
+    one copy is right, because REAPER may be reading the other.
+    """
+    lines = read_ini(ini_path)
+    start = find_reaper_section(lines)
+    if start is None:
+        return [(label, False, "reaper.ini has no [REAPER] section")
+                for label, _key, _check in expectations]
+    end = find_next_section(lines, start)
+    results = []
+    for label, key, check in expectations:
+        copies = count_key(lines, start, end, key)
+        value = get_value(lines, start, end, key)
+        if copies > 1:
+            results.append((label, False, f"{key} appears {copies} times"))
+        elif value is None:
+            results.append((label, False, f"{key} is missing"))
+        elif not check(value):
+            results.append((label, False, f"reaper.ini says {key}={value}"))
+        else:
+            results.append((label, True, ""))
+    return results
 
 
 def check_reaper_running():
@@ -1496,154 +1576,157 @@ class PreferencesTab(ttk.Frame):
             self.template_var.set(Path(path).name)
 
     def _apply(self):
-        # Re-read fresh in case the file changed externally
+        # REAPER holds its preferences in memory and writes them ALL back when
+        # it quits, so writing reaper.ini while it runs is silently undone at
+        # the next quit — the likeliest reason a setting "doesn't stick". This
+        # was only checked when the window opened; REAPER launched afterwards
+        # went unnoticed. Checked here, at the moment of writing.
+        if check_reaper_running():
+            messagebox.showwarning(
+                "Quit REAPER first",
+                "REAPER is running.\n\n"
+                "It keeps its preferences in memory and writes them all back "
+                "when it quits, which would undo everything applied here.\n\n"
+                "Quit REAPER, then press Apply again.")
+            return
+
         self.lines = read_ini(self.ini_path)
         self.section_start = find_reaper_section(self.lines)
+        if self.section_start is None:
+            self.lines.append("\n[REAPER]\n")
+            self.section_start = len(self.lines) - 1
         self.section_end = find_next_section(self.lines, self.section_start)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = self.ini_path.with_name(f"reaper.ini.backup_{timestamp}")
         shutil.copy2(self.ini_path, backup_path)
 
-        changes = []
+        # Every managed setting is written unconditionally and then read back
+        # off disk. Nothing is skipped because it already looked right: that
+        # judgement came from the same read that could be wrong.
+        expect = []
 
-        want_new = (LOADLASTPROJ_NEW_PROJECT if self.startup_var.get()
-                    else LOADLASTPROJ_LAST_ACTIVE)
-        current = ini_int(get_value(self.lines, self.section_start,
-                                    self.section_end, "loadlastproj"),
-                          LOADLASTPROJ_NEW_PROJECT)
-        if current != want_new:
+        def put(key, value):
             self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end,
-                "loadlastproj", str(want_new))
-        changes.append("Startup: open a new project" if self.startup_var.get()
-                       else "Startup: reopen the last active project")
+                self.lines, self.section_start, self.section_end, key, str(value))
+
+        def current_int(key):
+            return ini_int(get_value(self.lines, self.section_start,
+                                     self.section_end, key))
+
+        # loadlastproj is an enum: 19 new project, 16 last active project.
+        on = self.startup_var.get()
+        want = LOADLASTPROJ_NEW_PROJECT if on else LOADLASTPROJ_LAST_ACTIVE
+        put("loadlastproj", want)
+        expect.append(("Startup: open a new project" if on
+                       else "Startup: reopen the last active project",
+                       "loadlastproj", lambda v, w=want: ini_int(v, -1) == w))
 
         savepath = self.savepath_var.get().strip()
         if savepath:
-            self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end, "defsavepath", savepath)
-            changes.append(f"Save path: {savepath}")
+            put("defsavepath", savepath)
+            expect.append((f"Save path: {savepath}", "defsavepath",
+                           lambda v, w=savepath: v == w))
 
         template_name = self.template_var.get()
         if template_name and template_name != "(none)":
-            template_path = next((t for t in self.templates if t.name == template_name), None)
+            template_path = next(
+                (t for t in self.templates if t.name == template_name), None)
             if template_path:
                 try:
-                    rel = template_path.relative_to(self.resource_path)
-                    tmpl_value = str(rel)
+                    tmpl_value = str(template_path.relative_to(self.resource_path))
                 except ValueError:
                     tmpl_value = str(template_path)
-                # newprojtmpl being set IS what makes REAPER use the template.
-                # This also wrote newprojdo=1, which is the prompt-to-save
-                # bitfield, not a "use the template" flag — so picking a
-                # template silently rewrote an unrelated preference.
-                self.lines, self.section_end = set_value(
-                    self.lines, self.section_start, self.section_end,
-                    "newprojtmpl", tmpl_value)
-                changes.append(f"Template: {template_name}")
+                # Setting newprojtmpl is what makes REAPER use the template.
+                # (This used to also write newprojdo=1 as a "use template" flag;
+                # newprojdo is the prompt-to-save bitfield.)
+                put("newprojtmpl", tmpl_value)
+                expect.append((f"Template: {template_name}", "newprojtmpl",
+                               lambda v, w=tmpl_value: v == w))
 
-        # newprojdo &1 = "Prompt to save on new project". This used to write
-        # saveopts &1, which is "when overwriting a project file, rename the old
-        # one to .rpp-bak" — an unrelated setting silently toggled instead.
-        current = ini_int(get_value(self.lines, self.section_start,
-                                    self.section_end, "newprojdo"))
-        wanted = set_bit(current, 1, self.prompt_save_var.get())
-        if wanted != current:
-            self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end,
-                "newprojdo", str(wanted))
-        changes.append("Prompt to save on new project"
-                       if self.prompt_save_var.get()
-                       else "No prompt to save on new project")
+        # newprojdo &1 = prompt to save on new project (not saveopts &1, which
+        # is "rename the old project to .rpp-bak").
+        on = self.prompt_save_var.get()
+        put("newprojdo", set_bit(current_int("newprojdo"), 1, on))
+        expect.append(("Prompt to save on new project" if on
+                       else "No prompt to save on new project",
+                       "newprojdo", lambda v, on=on: bool(ini_int(v) & 1) == on))
 
         save_pattern = self._current_save_pattern()
         if save_pattern:
-            self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end,
-                "projsaveaspattern", save_pattern)
-            changes.append(
-                f"New project name: {preview_save_pattern(save_pattern)}")
+            put("projsaveaspattern", save_pattern)
+            expect.append((f"New project name: {preview_save_pattern(save_pattern)}",
+                           "projsaveaspattern", lambda v, w=save_pattern: v == w))
 
         recpath = self.recpath_var.get().strip()
         if recpath:
-            self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end, "projdefrecpath", recpath)
-            changes.append(f"Media path: {recpath}")
-            # Align the template REAPER will actually open — read back from the
-            # final newprojtmpl, not the dropdown. The dropdown only recognises
-            # templates it listed from ProjectTemplates, so a template REAPER
-            # was already using but the dropdown didn't match showed "(none)",
-            # was left in place, and was never aligned: its empty record path
-            # won and recordings landed at the top of the project folder.
-            effective = resolve_template(
-                get_value(self.lines, self.section_start, self.section_end,
-                          "newprojtmpl"),
-                self.resource_path)
-            if effective is not None:
-                changed, tmpl_error = set_template_record_path(
-                    effective, recpath)
-                if changed:
-                    changes.append(
-                        f"Template's own media path set to {recpath} "
-                        f"(it overrides the preference)")
-                elif tmpl_error:
-                    changes.append(f"⚠ Could not set the template's media "
-                                   f"path: {tmpl_error}")
+            put("projdefrecpath", recpath)
+            expect.append((f"Media path: {recpath}/", "projdefrecpath",
+                           lambda v, w=recpath: v == w))
 
-        # Peak LOCATION is altpeaks &4 ("Put new peak files in peaks/ subfolder
-        # relative to media"). This used to write peakcachegenmode, which only
-        # says WHEN peaks are generated — on import and on project load — so the
-        # checkbox reported success and changed nothing, on any machine.
-        current = ini_int(get_value(self.lines, self.section_start,
-                                    self.section_end, "altpeaks"))
-        wanted = set_bit(current, 4, self.peaks_var.get())
-        if wanted != current:
-            self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end,
-                "altpeaks", str(wanted))
-        changes.append("Peaks in peaks/ subfolder relative to media"
-                       if self.peaks_var.get() else "Peaks alongside media")
+        # altpeaks &4 = put new peak files in peaks/ subfolder relative to the
+        # media. (Not peakcachegenmode, which only says WHEN peaks are built.)
+        on = self.peaks_var.get()
+        put("altpeaks", set_bit(current_int("altpeaks"), 4, on))
+        expect.append(("Peaks in a peaks/ folder inside the media folder" if on
+                       else "Peaks alongside the media",
+                       "altpeaks", lambda v, on=on: bool(ini_int(v) & 4) == on))
 
-        # deftrackrecflags &1 = Record Arm (Preferences / Track/Send Defaults).
-        # Bit 1 only: the same field carries the record-config dropdown in bits
-        # 16-128, which must survive untouched.
-        current = ini_int(get_value(self.lines, self.section_start,
-                                    self.section_end, "deftrackrecflags"))
-        wanted = set_bit(current, 1, self.recarm_var.get())
-        if wanted != current:
-            self.lines, self.section_end = set_value(
-                self.lines, self.section_start, self.section_end,
-                "deftrackrecflags", str(wanted))
-        changes.append("New tracks record-armed" if self.recarm_var.get()
-                       else "New tracks not record-armed")
+        # deftrackrecflags &1 = record-arm. Bit 1 only: bits 16-128 carry the
+        # record-config dropdown, which must survive.
+        on = self.recarm_var.get()
+        put("deftrackrecflags", set_bit(current_int("deftrackrecflags"), 1, on))
+        expect.append(("New tracks record-armed" if on
+                       else "New tracks not record-armed",
+                       "deftrackrecflags", lambda v, on=on: bool(ini_int(v) & 1) == on))
 
         write_ini(self.ini_path, self.lines)
 
+        # Everything from here is read back off disk rather than remembered.
+        results = verify_ini(self.ini_path, expect)
+
+        # The template REAPER will really open, taken from reaper.ini as it now
+        # stands. A template stores its own RECORD_PATH and it overrides the
+        # preference, so it is aligned on every Apply — whichever template it
+        # is, however it came to be set — and then read back.
+        if recpath:
+            written = read_ini(self.ini_path)
+            ws = find_reaper_section(written)
+            effective = resolve_template(
+                get_value(written, ws, find_next_section(written, ws),
+                          "newprojtmpl") if ws is not None else None,
+                self.resource_path)
+            if effective is not None:
+                _changed, error = set_template_record_path(effective, recpath)
+                result = verify_template_record_path(effective, recpath)
+                if error and result[1]:
+                    result = (result[0], False, error)
+                results.append(result)
+
         script_path, script_error = install_reascript(self.resource_path)
         if script_path:
-            changes.append(f"Installed ReaScript: {REASCRIPT_NAME}")
-
-        summary = "\n".join(f"  • {c}" for c in changes)
-        if script_path:
-            script_note = (
-                f"\n\nREAPER's save-as pattern only names the project it makes "
-                f"at launch, not File > New Project. A script that does name it "
-                f"was installed:\n\n"
-                f"  Actions > Show action list > find "
-                f'"Script: {REASCRIPT_NAME}"\n'
-                f"  Bind it to a key, and use it instead of File > New Project."
-            )
+            results.append(verify_reascript(script_path))
         else:
-            script_note = f"\n\nCould not install the ReaScript: {script_error}"
+            results.append((f"ReaScript installed: {REASCRIPT_NAME}", False,
+                            script_error))
 
-        messagebox.showinfo(
-            "Settings Applied",
-            f"The following settings were applied:\n\n{summary}\n\n"
-            f"Backup saved to:\n{backup_path.name}\n\n"
-            f"Launch REAPER to verify your settings."
-            f"{script_note}"
-        )
+        failed = [r for r in results if not r[1]]
+        report = "\n".join(f"  ✓  {label}" if ok else f"  ✗  {label}\n       {detail}"
+                           for label, ok, detail in results)
+        tail = (f"\n\nBackup of your previous settings:\n{backup_path.name}"
+                f"\n\nNew Show Project: Actions > Show action list > "
+                f'"Script: {REASCRIPT_NAME}". Bind it to a key and use it '
+                f"instead of File > New Project, which REAPER never names.")
+        if failed:
+            messagebox.showwarning(
+                "Some settings did not stick",
+                f"Read back off disk after writing, {len(failed)} of "
+                f"{len(results)} did not hold:\n\n{report}{tail}")
+        else:
+            messagebox.showinfo(
+                "Settings applied and verified",
+                f"Read back off disk after writing — all {len(results)} hold:"
+                f"\n\n{report}{tail}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

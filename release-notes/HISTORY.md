@@ -1,7 +1,9 @@
 - **3.2.2** — On a fresh machine, Apply now sets REAPER up the standard way
   instead of writing its defaults back: startup opens a new project, and the
   checkboxes open on the recommended setup. Audio lands in Audio/ whatever
-  template REAPER is using, including one outside ProjectTemplates.
+  template REAPER is using, including one outside ProjectTemplates. Apply now
+  writes every setting and the template every time, reads them all back off
+  disk, reports ✓/✗ per setting, and refuses while REAPER is running.
 
 - **3.2.1** — Check for Updates works. Every earlier build failed with
   CERTIFICATE_VERIFY_FAILED because the packaged app had no certificate bundle
