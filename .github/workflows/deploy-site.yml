@@ -43,6 +43,9 @@ jobs:
           cp -R site/. build/site/
           # Replace the footer version placeholder with the live one.
           sed -i "s|<span id=\"sitever\">[^<]*</span>|<span id=\"sitever\">${{ steps.v.outputs.version }}</span>|" build/site/index.html
+          # The download button names this release's own file, so what people
+          # save carries its version number.
+          sed -i -E "s|SiRPS-[0-9]+(\.[0-9]+)*-universal\.dmg|SiRPS-${{ steps.v.outputs.version }}-universal.dmg|g" build/site/index.html
 
       - name: Publish to gh-pages (keep DMGs + appcast)
         uses: peaceiris/actions-gh-pages@v4

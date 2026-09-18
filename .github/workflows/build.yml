@@ -320,6 +320,9 @@ jobs:
           cp "${DMG}" "build/gh-pages/SiRPS-latest.dmg"
           cp -R site/. build/gh-pages/
           sed -i '' "s|<span id=\"sitever\">[^<]*</span>|<span id=\"sitever\">${VERSION}</span>|" build/gh-pages/index.html
+          # The download button names this release's own file, so what people
+          # save carries its version number.
+          sed -i '' -E "s|SiRPS-[0-9]+(\.[0-9]+)*-universal\.dmg|SiRPS-${VERSION}-universal.dmg|g" build/gh-pages/index.html
 
       - name: Check out gh-pages
         if: startsWith(github.ref, 'refs/tags/v')
