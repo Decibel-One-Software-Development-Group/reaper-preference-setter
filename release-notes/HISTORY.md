@@ -4,7 +4,8 @@
   All corrected against REAPER's documented keys. New: record-arm new tracks.
   The checkboxes now reflect what REAPER actually has and toggle it either way.
   Also installs a New Show Project ReaScript, which names a mid-session project
-  the way REAPER only does at launch.
+  the way REAPER only does at launch, and sets a chosen template's own record
+  path to match the media folder, which otherwise overrides it.
 
 - **3.1.0** — REAPER's Save New Project dialog opens on a name you chose: a
   production prefix plus a date format, written to REAPER's own save-as wildcard

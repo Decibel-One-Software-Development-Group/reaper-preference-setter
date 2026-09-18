@@ -80,6 +80,40 @@ def install_reascript(resource_path):
         return None, f"{type(e).__name__}: {e}"
 
 
+# A project template stores its own record path, and REAPER takes the
+# template's over projdefrecpath. So a template whose RECORD_PATH is empty
+# silently defeats the media-path preference and recordings land beside the
+# project file — which is exactly what it looks like when "the media path
+# doesn't work".
+RECORD_PATH_RE = re.compile(r'^(\s*RECORD_PATH )"[^"]*"( ".*")$', re.M)
+
+
+def set_template_record_path(template_path, media_path):
+    """Point a project template's own record path at the media folder.
+
+    Returns (changed, error). Never raises: a template we cannot rewrite must
+    not fail the preferences that did apply.
+    """
+    media_path = (media_path or "").replace('"', "").strip()
+    try:
+        path = Path(template_path)
+        text = path.read_text(errors="surrogateescape")
+        match = RECORD_PATH_RE.search(text)
+        if not match:
+            return False, f"{path.name} has no RECORD_PATH line"
+        if match.group(0) == f'{match.group(1)}"{media_path}"{match.group(2)}':
+            return False, None                      # already correct
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(path, path.with_name(f"{path.stem}.bak-{stamp}{path.suffix}"))
+        path.write_text(
+            RECORD_PATH_RE.sub(
+                lambda m: f'{m.group(1)}"{media_path}"{m.group(2)}', text, count=1),
+            errors="surrogateescape")
+        return True, None
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def ini_int(value, default=0):
     """An ini value REAPER wrote is normally an int, but a hand-edited or absent
     one must not crash Apply."""
@@ -1464,6 +1498,7 @@ class PreferencesTab(ttk.Frame):
                 self.lines, self.section_start, self.section_end, "defsavepath", savepath)
             changes.append(f"Save path: {savepath}")
 
+        chosen_template = None
         template_name = self.template_var.get()
         if template_name and template_name != "(none)":
             template_path = next((t for t in self.templates if t.name == template_name), None)
@@ -1480,6 +1515,7 @@ class PreferencesTab(ttk.Frame):
                 self.lines, self.section_end = set_value(
                     self.lines, self.section_start, self.section_end,
                     "newprojtmpl", tmpl_value)
+                chosen_template = template_path
                 changes.append(f"Template: {template_name}")
 
         # newprojdo &1 = "Prompt to save on new project". This used to write
@@ -1509,6 +1545,16 @@ class PreferencesTab(ttk.Frame):
             self.lines, self.section_end = set_value(
                 self.lines, self.section_start, self.section_end, "projdefrecpath", recpath)
             changes.append(f"Media path: {recpath}")
+            if chosen_template is not None:
+                changed, tmpl_error = set_template_record_path(
+                    chosen_template, recpath)
+                if changed:
+                    changes.append(
+                        f"Template's own media path set to {recpath} "
+                        f"(it overrides the preference)")
+                elif tmpl_error:
+                    changes.append(f"⚠ Could not set the template's media "
+                                   f"path: {tmpl_error}")
 
         # Peak LOCATION is altpeaks &4 ("Put new peak files in peaks/ subfolder
         # relative to media"). This used to write peakcachegenmode, which only

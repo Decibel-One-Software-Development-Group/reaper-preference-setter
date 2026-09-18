@@ -553,6 +553,81 @@ class PreferenceKeyTests(unittest.TestCase):
         self.assertEqual(cr.set_bit(0, 4, True), 4)  # altpeaks: off -> peaks/
 
 
+class TemplateRecordPathTests(unittest.TestCase):
+    """A template's own RECORD_PATH beats projdefrecpath, so a template with an
+    empty one silently defeats the media-path preference."""
+
+    def _template(self, d, record_path=""):
+        t = Path(d) / "Show.RPP"
+        t.write_text('<REAPER_PROJECT 0.1 "7.0"\n  TEMPO 120 4 4\n'
+                     f'  RECORD_PATH "{record_path}" ""\n  TRACK\n>\n')
+        return t
+
+    def test_empty_record_path_is_set_to_the_media_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = self._template(d, "")
+            changed, err = cr.set_template_record_path(t, "Audio")
+            self.assertTrue(changed)
+            self.assertIsNone(err)
+            self.assertIn('RECORD_PATH "Audio" ""', t.read_text())
+
+    def test_the_secondary_path_is_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = Path(d) / "Show.RPP"
+            t.write_text('  RECORD_PATH "" "Backup"\n')
+            cr.set_template_record_path(t, "Audio")
+            self.assertIn('RECORD_PATH "Audio" "Backup"', t.read_text())
+
+    def test_an_already_correct_template_is_left_alone(self):
+        """No rewrite, and no backup file littered beside it."""
+        with tempfile.TemporaryDirectory() as d:
+            t = self._template(d, "Audio")
+            before = t.read_text()
+            changed, err = cr.set_template_record_path(t, "Audio")
+            self.assertFalse(changed)
+            self.assertIsNone(err)
+            self.assertEqual(t.read_text(), before)
+            self.assertEqual(list(Path(d).glob("*.bak-*")), [])
+
+    def test_a_backup_is_written_before_changing_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = self._template(d, "")
+            cr.set_template_record_path(t, "Audio")
+            backups = list(Path(d).glob("Show.bak-*.RPP"))
+            self.assertEqual(len(backups), 1)
+            self.assertIn('RECORD_PATH "" ""', backups[0].read_text())
+
+    def test_only_the_first_record_path_is_touched(self):
+        """RECORD_PATH appears once per project; a stray later line must not be
+        rewritten as though it were the project's."""
+        with tempfile.TemporaryDirectory() as d:
+            t = Path(d) / "Show.RPP"
+            t.write_text('  RECORD_PATH "" ""\n  NOTES\n  RECORD_PATH "x" ""\n')
+            cr.set_template_record_path(t, "Audio")
+            text = t.read_text()
+            self.assertIn('RECORD_PATH "Audio" ""', text)
+            self.assertIn('RECORD_PATH "x" ""', text)
+
+    def test_a_template_without_the_line_reports_instead_of_raising(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = Path(d) / "Show.RPP"
+            t.write_text("<REAPER_PROJECT>\n")
+            changed, err = cr.set_template_record_path(t, "Audio")
+            self.assertFalse(changed)
+            self.assertIn("RECORD_PATH", err)
+
+    def test_a_missing_template_reports_instead_of_raising(self):
+        changed, err = cr.set_template_record_path("/nope/missing.RPP", "Audio")
+        self.assertFalse(changed)
+        self.assertTrue(err)
+
+    def test_a_quote_in_the_media_path_cannot_break_the_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = self._template(d, "")
+            cr.set_template_record_path(t, 'Au"dio')
+            self.assertIn('RECORD_PATH "Audio" ""', t.read_text())
+
+
 class ReaScriptTests(unittest.TestCase):
     """The New Show Project script is shipped and installed by the app, so it
     has to be in the build and it has to be valid Lua."""
