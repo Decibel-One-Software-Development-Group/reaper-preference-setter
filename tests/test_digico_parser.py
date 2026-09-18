@@ -13,6 +13,7 @@ Run:  python3 tests/test_digico_parser.py
 """
 import os
 import shutil
+import ssl
 import struct
 import subprocess
 import sys
@@ -626,6 +627,54 @@ class TemplateRecordPathTests(unittest.TestCase):
             t = self._template(d, "")
             cr.set_template_record_path(t, 'Au"dio')
             self.assertIn('RECORD_PATH "Audio" ""', t.read_text())
+
+
+class HttpsContextTests(unittest.TestCase):
+    """Check for Updates failed in every shipped build with CERTIFICATE_VERIFY_
+    FAILED: a frozen app's OpenSSL looks for a CA file at a path baked in from
+    the build machine. It passed in development because Apple's Python trusts
+    the keychain regardless. These pin the fix."""
+
+    def test_the_context_always_verifies(self):
+        """The fix must never be "turn verification off"."""
+        ctx = cr.https_context()
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(ctx.check_hostname)
+
+    def test_certifi_bundle_is_loaded_when_available(self):
+        try:
+            import certifi  # noqa: F401
+        except ImportError:
+            self.skipTest("certifi not installed here — the builds install it")
+        self.assertGreater(cr.https_context().cert_store_stats()["x509_ca"], 0)
+
+    def test_update_check_passes_the_context_to_urlopen(self):
+        """The regression that shipped: urlopen called with no context, so it
+        fell back to the missing baked-in CA file."""
+        seen = {}
+        appcast = ('<?xml version="1.0"?><rss xmlns:sparkle="http://www.'
+                   'andymatuschak.org/xml-namespaces/sparkle"><channel><item>'
+                   f'<sparkle:version>{cr.APP_VERSION}</sparkle:version>'
+                   '<enclosure url="https://example.invalid/x.dmg"/></item>'
+                   '</channel></rss>').encode()
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return appcast
+
+        def fake_urlopen(url, timeout=None, context=None):
+            seen["context"] = context
+            return Response()
+
+        real = cr.urllib.request.urlopen
+        cr.urllib.request.urlopen = fake_urlopen
+        try:
+            self.assertEqual(cr.check_for_updates(quiet=True), cr.APP_VERSION)
+        finally:
+            cr.urllib.request.urlopen = real
+        self.assertIsInstance(seen.get("context"), ssl.SSLContext)
+        self.assertEqual(seen["context"].verify_mode, ssl.CERT_REQUIRED)
 
 
 class ReaScriptTests(unittest.TestCase):

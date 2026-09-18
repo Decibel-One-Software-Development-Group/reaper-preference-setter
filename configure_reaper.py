@@ -11,6 +11,7 @@ Tab 2 — DiGiCo → Reaper CSV: generate a single-column track-name CSV from a
 import os
 import re
 import shutil
+import ssl
 import struct
 import sys
 import threading
@@ -247,7 +248,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.2.1"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -1991,6 +1992,24 @@ def latest_version_from_appcast(xml_text):
     return best
 
 
+def https_context():
+    """An SSL context that can actually verify a certificate.
+
+    HTTPS needs a CA bundle to check the server against. A frozen app has none
+    of its own: its OpenSSL looks for the certificate file at a path baked in
+    from the machine it was BUILT on, which does not exist on the user's
+    machine — so every HTTPS request fails with CERTIFICATE_VERIFY_FAILED,
+    "unable to get local issuer certificate". It never showed in development
+    because Apple's Python trusts the macOS keychain regardless of any file.
+    certifi ships the bundle inside the app.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def check_for_updates(parent=None, quiet=False):
     """Ask the appcast whether there's a newer build, and offer the download.
 
@@ -2001,7 +2020,8 @@ def check_for_updates(parent=None, quiet=False):
     few times a show, not a daemon.
     """
     try:
-        with urllib.request.urlopen(APPCAST_URL, timeout=10) as resp:
+        with urllib.request.urlopen(APPCAST_URL, timeout=10,
+                                    context=https_context()) as resp:
             latest, url = latest_version_from_appcast(resp.read().decode("utf-8"))
     except Exception as e:
         if not quiet:

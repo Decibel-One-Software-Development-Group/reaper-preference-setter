@@ -1,3 +1,8 @@
+- **3.2.1** — Check for Updates works. Every earlier build failed with
+  CERTIFICATE_VERIFY_FAILED because the packaged app had no certificate bundle
+  to verify against; it now ships its own. 3.0.0–3.2.0 cannot announce this
+  release, so download it once by hand.
+
 - **3.2.0** — Three of the four Preferences settings were writing the wrong
   REAPER key and reporting success: peak location (the `peaks/` subfolder),
   startup behaviour (which set the opposite of its checkbox), and prompt-to-save.

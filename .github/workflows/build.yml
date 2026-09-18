@@ -123,7 +123,7 @@ jobs:
       - name: Install PyInstaller
         run: |
           "$PYBIN" -m pip install --upgrade pip
-          "$PYBIN" -m pip install pyinstaller tkinterdnd2
+          "$PYBIN" -m pip install pyinstaller tkinterdnd2 certifi
 
       - name: Build universal2 .app with PyInstaller
         run: |
@@ -131,6 +131,7 @@ jobs:
             --name "SiRPS" \
             --icon icon.icns \
             --add-data "reascripts:reascripts" \
+            --collect-data certifi \
             --osx-bundle-identifier com.decibelone.sirps \
             --collect-all tkinterdnd2 \
             --target-architecture universal2 \
@@ -376,10 +377,10 @@ jobs:
           Select-String -Path configure_reaper.py -Pattern '^APP_VERSION' | Select-Object -First 1
 
       - name: Install PyInstaller
-        run: pip install pyinstaller tkinterdnd2
+        run: pip install pyinstaller tkinterdnd2 certifi
 
       - name: Build executable
-        run: pyinstaller --windowed --onefile --name "SiRPS" --icon icon.ico --add-data "reascripts;reascripts" --collect-all tkinterdnd2 configure_reaper.py
+        run: pyinstaller --windowed --onefile --name "SiRPS" --icon icon.ico --add-data "reascripts;reascripts" --collect-data certifi --collect-all tkinterdnd2 configure_reaper.py
 
       - name: Zip exe with README
         run: Compress-Archive -Path "dist/SiRPS.exe", "README.md" -DestinationPath "$env:ZIP"

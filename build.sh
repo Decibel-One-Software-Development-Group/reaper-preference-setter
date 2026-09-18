@@ -4,7 +4,7 @@
 # a native executable that requires no Python installation.
 #
 # Prerequisites:
-#   pip install pyinstaller tkinterdnd2
+#   pip install pyinstaller tkinterdnd2 certifi
 #
 # macOS: this builds a universal2 .app (arm64 + x86_64 in one binary, runs
 # natively on Apple Silicon and Intel). That requires a universal2 Python —
@@ -36,6 +36,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
         --name "SiRPS" \
         --icon icon.icns \
         --add-data "reascripts:reascripts" \
+        --collect-data certifi \
         --osx-bundle-identifier com.decibelone.sirps \
         --collect-all tkinterdnd2 \
         --target-architecture universal2 \
