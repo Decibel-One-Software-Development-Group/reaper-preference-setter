@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SiRPS</title>
-<meta name="description" content="SiRPS sets up REAPER the way you work, and builds your Reaper track list straight from a DiGiCo session. Free for macOS and Windows.">
+<meta name="description" content="SiRPS applies REAPER preferences and builds a REAPER track list from a DiGiCo session file. Free for macOS and Windows.">
 <meta name="theme-color" content="#7c3aed">
 <link rel="icon" type="image/png" href="icon.png">
 <meta property="og:type" content="website">
@@ -71,8 +71,8 @@ footer{margin-top:2.75rem;padding-top:1.25rem;border-top:1px solid var(--border)
   </div>
 
   <section class="hero">
-    <h1>Your Reaper session, ready before you are</h1>
-    <p class="lede">Sets up REAPER the way you work, and builds your Reaper track list straight from a DiGiCo session — real channel names, stereo pairs, in patch order.</p>
+    <h1>REAPER preferences and DiGiCo track lists</h1>
+    <p class="lede">Applies a set of REAPER preferences, and builds a REAPER track list from a DiGiCo session file with channel names, stereo pairs and patch order.</p>
     <div class="dls">
       <a class="dl" href="SiRPS-latest.dmg">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
@@ -83,14 +83,14 @@ footer{margin-top:2.75rem;padding-top:1.25rem;border-top:1px solid var(--border)
         Download for Windows
       </a>
     </div>
-    <p class="cap">Free · signed and notarized · universal, Apple Silicon and Intel</p>
+    <p class="cap">Free · Signed and notarized · Universal</p>
   </section>
 
   <div class="req">
     <h2>What it does</h2>
     <ul>
-      <li><strong>Preferences</strong> — startup behaviour, project template, default save and media paths, where peak files live. Set once, the same on every machine.</li>
-      <li><strong>DiGiCo → Reaper CSV</strong> — drop a <code>.ses</code> from the console and get a track-name CSV for the J&amp;T Live Recording Template's PATCH IMPORT. Channel names, stereo pairs and patch order come straight out of the session.</li>
+      <li><strong>Preferences</strong> — startup behaviour, project template, default save and media paths, peak file location.</li>
+      <li><strong>DiGiCo → REAPER CSV</strong> — reads a console <code>.ses</code> file and writes a track-name CSV for the J&amp;T Live Recording Template's PATCH IMPORT.</li>
     </ul>
   </div>
 
@@ -98,8 +98,8 @@ footer{margin-top:2.75rem;padding-top:1.25rem;border-top:1px solid var(--border)
     <h2>What you need</h2>
     <ul>
       <li>For the CSV: a DiGiCo Quantum (SDQ) console on software v22 or later, with your Copy Audio routing saved as a preset named <code>Extract for Reaper</code></li>
-      <li>macOS 11 Big Sur or later (Apple Silicon or Intel), or Windows 10 or later</li>
-      <li>REAPER closed while preferences are applied — the app checks and tells you</li>
+      <li>macOS 11 or later, or Windows 10 or later</li>
+      <li>REAPER closed while preferences are applied (the app checks)</li>
     </ul>
   </div>
 
