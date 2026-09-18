@@ -1,3 +1,7 @@
+- **3.2.3** — Keeps one rolling project backup instead of a new timestamped
+  file on every save, which had left 54 in a two-hour recording. Auto-save is
+  unchanged, so crash safety during a show is too.
+
 - **3.2.2** — On a fresh machine, Apply now sets REAPER up the standard way
   instead of writing its defaults back: startup opens a new project, and the
   checkboxes open on the recommended setup. Audio lands in Audio/ whatever

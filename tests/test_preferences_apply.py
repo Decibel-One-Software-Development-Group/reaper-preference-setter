@@ -58,12 +58,18 @@ import configure_reaper as cr  # noqa: E402
 cr.tk, cr.ttk, cr.filedialog, cr.messagebox = _tk, _ttk, _fd, _mb
 cr.PreferencesTab.__bases__ = (_ttk.Frame,)
 
+# REAPER's own defaults on a fresh install, as read off a real one: startup
+# reopens the last project, and auto-save runs every minute, any time, with
+# each backup timestamped (saveopts 17 = 1 + 16).
 FRESH_INI = """[REAPER]
 loadlastproj=16
 newprojdo=0
 altpeaks=0
 deftrackrecflags=256
 peakcachegenmode=3
+saveopts=17
+autosaveint=1
+autosavemode=2
 {template_line}
 """
 
@@ -272,6 +278,44 @@ class ApplyOnAFreshMachine(unittest.TestCase):
         self.assertEqual(title, "Some settings did not stick")
         self.assertIn("✗  Startup: open a new project", message)
         self.assertIn("loadlastproj=16", message)
+
+    # ── backups ─────────────────────────────────────────────────────────────
+
+    def _saveopts_after(self, before, **changes):
+        t = self.res / "ProjectTemplates" / "J&T.RPP"
+        self._machine("ProjectTemplates/J&T.RPP", t)
+        ini = self.res / "reaper.ini"
+        ini.write_text(ini.read_text().replace("saveopts=17", f"saveopts={before}"))
+        _, value = self._apply(**changes)
+        return int(value("saveopts")), value
+
+    def test_one_rolling_backup_instead_of_a_file_per_save(self):
+        """A two-hour show left 54 timestamped .rpp-bak files: auto-save every
+        minute, any time, with saveopts &16 timestamping each backup."""
+        opts, _ = self._saveopts_after(17)
+        self.assertEqual(opts & 16, 0, "backups still timestamped")
+        self.assertEqual(opts & 1, 1, "no backup kept at all")
+
+    def test_auto_save_itself_is_left_alone(self):
+        """Crash safety during a show must not change: interval, mode and the
+        auto-save targets (&2 project, &4/&8 timestamped files) all survive."""
+        opts, value = self._saveopts_after(1 | 2 | 4 | 8 | 16)
+        self.assertEqual(opts, 1 | 2 | 4 | 8)
+        self.assertEqual(value("autosaveint"), "1")
+        self.assertEqual(value("autosavemode"), "2")
+
+    def test_a_rolling_backup_is_created_even_if_backups_were_off(self):
+        opts, _ = self._saveopts_after(16)
+        self.assertEqual(opts & 1, 1)
+        self.assertEqual(opts & 16, 0)
+
+    def test_unticking_restores_a_timestamped_file_per_save(self):
+        opts, _ = self._saveopts_after(1, rolling_backup_var=False)
+        self.assertEqual(opts & 16, 16)
+
+    def test_the_backup_setting_is_read_back_and_reported(self):
+        self._saveopts_after(17)
+        self.assertIn("✓  One rolling project backup", self._report()[2])
 
 if __name__ == "__main__":
     unittest.main()

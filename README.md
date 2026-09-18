@@ -19,6 +19,7 @@ What it configures:
 - **Media path** — Sets the relative media recording folder (e.g., `Audio`). If you've also chosen a project template, its own record path is set to match — a template's record path overrides this preference, so a template with an empty one would otherwise leave recordings beside the project file
 - **Peak files** — Stores new `.reapeaks` in a `peaks/` subfolder relative to media, so the audio folder holds only audio
 - **Record-arm new tracks** — New tracks arrive armed, ready to record
+- **One rolling project backup** — Keeps a single `.rpp-bak` of the previous save instead of a new timestamped file every time (REAPER's default left 54 in a two-hour recording). Auto-save itself is untouched
 
 ### New Show Project (ReaScript)
 

@@ -344,7 +344,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.2.2"
+APP_VERSION = "3.2.3"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -1536,6 +1536,19 @@ class PreferencesTab(ttk.Frame):
         ).grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
+        # REAPER's defaults auto-save every minute, any time — including while
+        # recording — and timestamp each backup, so every save leaves a new
+        # file. A two-hour show left 54 of them. This keeps a single rolling
+        # backup instead; auto-save itself is left exactly as it is, so crash
+        # safety during a show doesn't change.
+        self.rolling_backup_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            self,
+            text="Keep one rolling project backup, not a new file on every save",
+            variable=self.rolling_backup_var,
+        ).grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
+        row += 1
+
         btn_frame = ttk.Frame(self)
         btn_frame.grid(row=row, column=0, columnspan=3, pady=(20, 0))
         ttk.Button(btn_frame, text="Apply", command=self._apply).pack(side="left", padx=5)
@@ -1679,6 +1692,22 @@ class PreferencesTab(ttk.Frame):
         expect.append(("New tracks record-armed" if on
                        else "New tracks not record-armed",
                        "deftrackrecflags", lambda v, on=on: bool(ini_int(v) & 1) == on))
+
+        # saveopts &1 = keep a .rpp-bak of the previous save; &16 = timestamp it,
+        # which makes each save a NEW file rather than overwriting one. Only
+        # those two bits are touched: &2/&4/&8 choose where auto-save writes,
+        # and the auto-save interval and mode are separate keys left alone.
+        on = self.rolling_backup_var.get()
+        opts = set_bit(current_int("saveopts"), 16, not on)
+        if on:
+            opts = set_bit(opts, 1, True)       # one rolling backup must exist
+        put("saveopts", opts)
+        expect.append((
+            "One rolling project backup (.rpp-bak), overwritten each save" if on
+            else "A new timestamped project backup on every save",
+            "saveopts",
+            (lambda v: ini_int(v) & 16 == 0 and ini_int(v) & 1 == 1) if on
+            else (lambda v: ini_int(v) & 16 == 16)))
 
         write_ini(self.ini_path, self.lines)
 
