@@ -85,5 +85,54 @@
         sparkle:edSignature="Y4QRH5syP9aw6F6StSVa8TQOaxbTjAmll5vf7NLmWawWjhGo4HyNdbLC8zM254FPT9GeDb8WAqNiB8ACvswJDg=="/>
       <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
     </item>
+    <item>
+      <title>SiRPS 3.2.0</title>
+      <link>https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases/tag/v3.2.0</link>
+      <sparkle:version>3.2.0</sparkle:version>
+      <sparkle:shortVersionString>3.2.0</sparkle:shortVersionString>
+      <description><![CDATA[
+<h3>Four preferences that never actually worked</h3>
+<p>Every setting in the Preferences tab wrote a key and reported success. Three of them were writing the wrong key, so REAPER was never told what you asked for — and one of the three set the opposite of what its checkbox promised.</p>
+<p><strong>Peak files.</strong> The <code>peaks/</code> subfolder option wrote <code>peakcachegenmode</code>, which controls only *when* peaks are generated — on import, and on project load. Peak *location* is <code>altpeaks &4</code>. Worse, <code>peakcachegenmode</code> defaults to <code>3</code>, and the code ORed bit 1 into it: <code>3 | 1</code> is <code>3</code>, so the write was a no-op even on its own terms. This is the one that left <code>.reapeaks</code> sitting beside the audio.</p>
+<p><strong>Startup behaviour.</strong> <code>loadlastproj</code> is an enum, not a bitfield — 19 is "new project", 16 is "last active project". The code masked it (<code>& ~1 & ~2</code>), which turns 19 into 16. Ticking "open a new project on startup" set REAPER to reopen the last project instead.</p>
+<p><strong>Prompt to save on new project.</strong> Wrote <code>saveopts &1</code>, which is "when overwriting a project file, rename the old one to .rpp-bak". The real key is <code>newprojdo &1</code>. An unrelated setting was toggled instead.</p>
+<p><strong>Choosing a template</strong> also wrote <code>newprojdo=1</code>, apparently as a "use the template" flag. There is no such flag — setting <code>newprojtmpl</code> is what makes REAPER use it — and <code>newprojdo</code> is the prompt-to-save bitfield, so picking a template quietly rewrote an unrelated preference.</p>
+<p>All four now write the documented key, and the media path and save path, which were already correct, are unchanged.</p>
+<h3>Record-arm new tracks</h3>
+<p>A new checkbox: new tracks arrive record-armed. It sets <code>deftrackrecflags &1</code>, bit 1 only — the same field carries the record-config dropdown in bits 16 to 128, which survive untouched.</p>
+<h3>Checkboxes tell the truth now</h3>
+<p>The four checkboxes were hardcoded to start ticked and could only ever switch a setting on, so unticking one did nothing while looking like it meant something. They now open reflecting what REAPER actually has, and toggle it either way.</p>
+<h3>A New Show Project action that actually names the project</h3>
+<p>REAPER applies its save-as wildcard pattern to the project it creates at launch, but not to File > New Project, so a show started mid-session arrives unnamed no matter what the pattern says. Nothing written to <code>reaper.ini</code> fixes that — it is REAPER's behaviour, not a setting.</p>
+<p>So applying preferences now also installs <strong>SiRPS New Show Project</strong> into REAPER's <code>Scripts</code> folder. It reads the same pattern and save path out of REAPER's own config, shows you the resulting name to confirm or edit, then creates the dated folder, starts a new project from your template, points the media folder at <code>Audio</code> and saves into it.</p>
+<p>It never touches the file dialog, which is what would have required SWS or js_ReaScriptAPI — it builds the path and saves directly. No extension needed.</p>
+<p>Bind it once under Actions > Show action list and use it instead of File > New Project. It refuses to overwrite a project that already exists, and cancelling leaves everything untouched.</p>
+<h3>The media path now survives a project template</h3>
+<p>Setting the media folder to <code>Audio</code> had no effect for anyone using a project template. A template stores its own <code>RECORD_PATH</code>, and REAPER takes the template's over the <code>projdefrecpath</code> preference — so a template saved with an empty record path sent every recording to the top level of the project folder, no matter what the preference said.</p>
+<p>It looks exactly like the media-path setting being broken, and the peaks folder compounds it: peaks nest relative to the media, so they end up at the top level too, beside the audio, rather than tucked inside it.</p>
+<p>When a template is chosen and a media folder is set, the template's own record path is now set to match, with a <code>.bak-<timestamp>.RPP</code> copy kept beside it. A template that already agrees is left alone and no backup is written.</p>
+<hr/>
+<h3>Version history</h3>
+<ul>
+<li><strong>3.2.0</strong> — Three of the four Preferences settings were writing the wrong REAPER key and reporting success: peak location (the <code>peaks/</code> subfolder), startup behaviour (which set the opposite of its checkbox), and prompt-to-save. All corrected against REAPER's documented keys. New: record-arm new tracks. The checkboxes now reflect what REAPER actually has and toggle it either way. Also installs a New Show Project ReaScript, which names a mid-session project the way REAPER only does at launch, and sets a chosen template's own record path to match the media folder, which otherwise overrides it.</li>
+</ul>
+<ul>
+<li><strong>3.1.0</strong> — REAPER's Save New Project dialog opens on a name you chose: a production prefix plus a date format, written to REAPER's own save-as wildcard pattern and previewed as you set it. The bundle reports its real version to Finder instead of 0.0.0.</li>
+</ul>
+<ul>
+<li><strong>3.0.0</strong> — Now SiRPS, with the suite icon. Records over MADI as well as a SoundGrid card, and you pick which ports you record to, so a second stream carrying outputs patched straight to it — program and press feeds — comes through in the same CSV. More channels resolve to their real name: Copy Audio sources count as inputs, stereo pairs by port order, the lowest-numbered channel wins a shared input, alt inputs arrive named (Oliver ALT), adjacent mono L/R pairs are dotted so Reaper makes them stereo, and older 'vM' sessions parse.</li>
+</ul>
+<p>Releases before 3.0.0 predate this ledger; their notes are on the Releases page.</p>
+      ]]></description>
+      <pubDate>Fri, 18 Sep 2026 00:31:28 +0000</pubDate>
+      <enclosure
+        url="https://decibel-one-software-development-group.github.io/reaper-preference-setter/SiRPS-3.2.0-universal.dmg"
+        sparkle:version="3.2.0"
+        sparkle:shortVersionString="3.2.0"
+        length="19470563"
+        type="application/octet-stream"
+        sparkle:edSignature="0lrRe4yCzn6ylMTq0bgscx2S7Kai1vKFpNimrFimG7Lc0zXlkt88pUR9qM+uYRNzeMx5jUZ4quF3o9VZIGGcBA=="/>
+      <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+    </item>
   </channel>
 </rss>
