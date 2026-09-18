@@ -89,6 +89,22 @@ def install_reascript(resource_path):
 RECORD_PATH_RE = re.compile(r'^(\s*RECORD_PATH )"[^"]*"( ".*")$', re.M)
 
 
+def resolve_template(value, resource_path):
+    """The project template file REAPER will open for a newprojtmpl value.
+
+    REAPER stores it relative to its resource folder ("ProjectTemplates/x.RPP")
+    or as an absolute path. Returns None when no template is set or the file is
+    not there.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        path = Path(resource_path) / path
+    return path if path.is_file() else None
+
+
 def set_template_record_path(template_path, media_path):
     """Point a project template's own record path at the media folder.
 
@@ -248,7 +264,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.2.1"
+APP_VERSION = "3.2.2"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -1365,12 +1381,20 @@ class PreferencesTab(ttk.Frame):
         # Project template
         ttk.Label(self, text="Default project template:").grid(row=row, column=0, sticky="w", pady=(15, 5))
         row += 1
+        # Show the template REAPER will really open. Matching was a substring
+        # test on the name ("Show.RPP" matched "My Show.RPP"), and a template
+        # outside ProjectTemplates wasn't listed at all — so the dropdown said
+        # "(none)" while REAPER went on using a template it never aligned.
+        current_path = resolve_template(self.current["newprojtmpl"],
+                                        self.resource_path)
+        if current_path is not None and not any(
+                t.resolve() == current_path.resolve() for t in self.templates):
+            self.templates.append(current_path)
         template_names = ["(none)"] + [t.name for t in self.templates]
         self.template_var = tk.StringVar()
-        current_tmpl = self.current["newprojtmpl"]
         matched = False
         for t in self.templates:
-            if current_tmpl and t.name in current_tmpl:
+            if current_path is not None and t.resolve() == current_path.resolve():
                 self.template_var.set(t.name)
                 matched = True
                 break
@@ -1396,24 +1420,23 @@ class PreferencesTab(ttk.Frame):
             row=row, column=0, columnspan=3, sticky="ew", pady=15)
         row += 1
 
-        self.startup_var = tk.BooleanVar(
-            value=ini_int(self.current["loadlastproj"],
-                          LOADLASTPROJ_NEW_PROJECT) in (18, 19))
+        # SiRPS exists to impose a known-good setup, so the standard settings
+        # open on the recommendation — not on whatever REAPER has now. Mirroring
+        # REAPER instead meant a fresh install opened with everything unticked
+        # (its own default is "reopen the last project"), and since Apply sets
+        # each one both ways, Apply then wrote those defaults straight back.
+        # Unticking still genuinely turns a setting off.
+        self.startup_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(self, text="Open new project on startup", variable=self.startup_var).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
-        self.prompt_save_var = tk.BooleanVar(
-            value=bool(ini_int(self.current["newprojdo"]) & 1))
+        self.prompt_save_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(self, text="Prompt to save on new project", variable=self.prompt_save_var).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
-        # These two mirror what REAPER currently has, and toggle it either way —
-        # a checkbox that can only ever switch something on is a lie about what
-        # unticking it does.
-        self.peaks_var = tk.BooleanVar(
-            value=bool(ini_int(self.current["altpeaks"]) & 4))
+        self.peaks_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             self,
             text="Put new peak files in peaks/ subfolder relative to media",
@@ -1421,6 +1444,9 @@ class PreferencesTab(ttk.Frame):
         ).grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
         row += 1
 
+        # Record-arm is a personal choice, not part of the standard setup, so
+        # it opens on what REAPER has — a fresh install gets it off, and anyone
+        # who turned it on keeps it on when they come back.
         self.recarm_var = tk.BooleanVar(
             value=bool(ini_int(self.current["deftrackrecflags"]) & 1))
         ttk.Checkbutton(
@@ -1499,7 +1525,6 @@ class PreferencesTab(ttk.Frame):
                 self.lines, self.section_start, self.section_end, "defsavepath", savepath)
             changes.append(f"Save path: {savepath}")
 
-        chosen_template = None
         template_name = self.template_var.get()
         if template_name and template_name != "(none)":
             template_path = next((t for t in self.templates if t.name == template_name), None)
@@ -1516,7 +1541,6 @@ class PreferencesTab(ttk.Frame):
                 self.lines, self.section_end = set_value(
                     self.lines, self.section_start, self.section_end,
                     "newprojtmpl", tmpl_value)
-                chosen_template = template_path
                 changes.append(f"Template: {template_name}")
 
         # newprojdo &1 = "Prompt to save on new project". This used to write
@@ -1546,9 +1570,19 @@ class PreferencesTab(ttk.Frame):
             self.lines, self.section_end = set_value(
                 self.lines, self.section_start, self.section_end, "projdefrecpath", recpath)
             changes.append(f"Media path: {recpath}")
-            if chosen_template is not None:
+            # Align the template REAPER will actually open — read back from the
+            # final newprojtmpl, not the dropdown. The dropdown only recognises
+            # templates it listed from ProjectTemplates, so a template REAPER
+            # was already using but the dropdown didn't match showed "(none)",
+            # was left in place, and was never aligned: its empty record path
+            # won and recordings landed at the top of the project folder.
+            effective = resolve_template(
+                get_value(self.lines, self.section_start, self.section_end,
+                          "newprojtmpl"),
+                self.resource_path)
+            if effective is not None:
                 changed, tmpl_error = set_template_record_path(
-                    chosen_template, recpath)
+                    effective, recpath)
                 if changed:
                     changes.append(
                         f"Template's own media path set to {recpath} "

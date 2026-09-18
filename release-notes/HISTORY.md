@@ -1,3 +1,8 @@
+- **3.2.2** — On a fresh machine, Apply now sets REAPER up the standard way
+  instead of writing its defaults back: startup opens a new project, and the
+  checkboxes open on the recommended setup. Audio lands in Audio/ whatever
+  template REAPER is using, including one outside ProjectTemplates.
+
 - **3.2.1** — Check for Updates works. Every earlier build failed with
   CERTIFICATE_VERIFY_FAILED because the packaged app had no certificate bundle
   to verify against; it now ships its own. 3.0.0–3.2.0 cannot announce this
