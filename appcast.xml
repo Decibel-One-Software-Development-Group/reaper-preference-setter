@@ -171,5 +171,57 @@
         sparkle:edSignature="L8poRNvv8s8l63RzW0zFTdpyMqFSz4B/qJvQaibcFipTQQVKA38cM0+DMkL6DTgc6RzZOgDbcbwoy5J67i89BA=="/>
       <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
     </item>
+    <item>
+      <title>SiRPS 3.2.2</title>
+      <link>https://github.com/Decibel-One-Software-Development-Group/reaper-preference-setter/releases/tag/v3.2.2</link>
+      <sparkle:version>3.2.2</sparkle:version>
+      <sparkle:shortVersionString>3.2.2</sparkle:shortVersionString>
+      <description><![CDATA[
+<h3>Apply sets REAPER up properly on a fresh machine</h3>
+<p>On a machine that had never been set up, pressing Apply left REAPER reopening the last project at startup instead of starting a new one.</p>
+<p>3.2.0 changed the Preferences checkboxes to open showing whatever REAPER already had, rather than the recommended setup. On a fresh install REAPER's own default is "reopen the last project", so the startup box opened unticked — and because Apply now sets each option both ways, Apply wrote that default straight back. The same went for prompt-to-save and the peaks subfolder.</p>
+<p>They open ticked again, because setting REAPER up the standard way is what the app is for. Unticking one still genuinely turns it off. <strong>Record-arm new tracks</strong> is the exception: it's a personal choice rather than part of the standard setup, so it still opens on whatever REAPER has — off on a fresh install, and left on for anyone who turned it on.</p>
+<h3>Audio lands in Audio/ whatever template REAPER is using</h3>
+<p>On the same machine the peaks nested but the audio didn't, recording straight into the project folder.</p>
+<p>A project template carries its own media path, and it overrides the preference. Apply sets the template's media path to match — but only for the template picked in the dropdown, and the dropdown recognised a template only if it lived in <code>ProjectTemplates</code> and its name matched loosely. A template REAPER was already using that the dropdown didn't recognise showed as "(none)", stayed in use, and was never touched, so its empty media path won.</p>
+<p>Apply now reads back which template REAPER will actually open and aligns that one, wherever it lives. The dropdown shows it too, instead of "(none)", and matches it exactly — "Show.RPP" no longer mistakes itself for "My Show.RPP".</p>
+<h3>Apply double-checks everything, every time</h3>
+<p>Apply used to skip a setting when it already looked right, and then report what it had meant to do. Both of those trusted a single read of <code>reaper.ini</code> that could itself be wrong. Now:</p>
+<ul>
+<li><strong>Every setting is written on every Apply</strong>, whether or not it looked correct already. Nothing is skipped on the strength of a read.</li>
+<li><strong>The template is aligned on every Apply</strong> — whichever one REAPER will open, however it came to be set.</li>
+<li><strong>Everything is read back off disk afterwards</strong>, and the report lists each setting with ✓ or ✗ against what is actually there, not what was intended. If anything did not hold, the dialog says so and says why.</li>
+<li><strong>A setting that appears twice</strong> in <code>reaper.ini</code> is collapsed to the one value written. Before, the first copy was updated and read back as proof, while REAPER could be reading the other.</li>
+<li><strong>Apply refuses while REAPER is running.</strong> REAPER keeps its preferences in memory and writes them all back when it quits, which silently undoes anything written meanwhile — the most likely reason a setting "doesn't stick". This was only checked when SiRPS opened, so launching REAPER afterwards went unnoticed.</li>
+</ul>
+<hr/>
+<h3>Version history</h3>
+<ul>
+<li><strong>3.2.2</strong> — On a fresh machine, Apply now sets REAPER up the standard way instead of writing its defaults back: startup opens a new project, and the checkboxes open on the recommended setup. Audio lands in Audio/ whatever template REAPER is using, including one outside ProjectTemplates. Apply now writes every setting and the template every time, reads them all back off disk, reports ✓/✗ per setting, and refuses while REAPER is running.</li>
+</ul>
+<ul>
+<li><strong>3.2.1</strong> — Check for Updates works. Every earlier build failed with CERTIFICATE_VERIFY_FAILED because the packaged app had no certificate bundle to verify against; it now ships its own. 3.0.0–3.2.0 cannot announce this release, so download it once by hand.</li>
+</ul>
+<ul>
+<li><strong>3.2.0</strong> — Three of the four Preferences settings were writing the wrong REAPER key and reporting success: peak location (the <code>peaks/</code> subfolder), startup behaviour (which set the opposite of its checkbox), and prompt-to-save. All corrected against REAPER's documented keys. New: record-arm new tracks. The checkboxes now reflect what REAPER actually has and toggle it either way. Also installs a New Show Project ReaScript, which names a mid-session project the way REAPER only does at launch, and sets a chosen template's own record path to match the media folder, which otherwise overrides it.</li>
+</ul>
+<ul>
+<li><strong>3.1.0</strong> — REAPER's Save New Project dialog opens on a name you chose: a production prefix plus a date format, written to REAPER's own save-as wildcard pattern and previewed as you set it. The bundle reports its real version to Finder instead of 0.0.0.</li>
+</ul>
+<ul>
+<li><strong>3.0.0</strong> — Now SiRPS, with the suite icon. Records over MADI as well as a SoundGrid card, and you pick which ports you record to, so a second stream carrying outputs patched straight to it — program and press feeds — comes through in the same CSV. More channels resolve to their real name: Copy Audio sources count as inputs, stereo pairs by port order, the lowest-numbered channel wins a shared input, alt inputs arrive named (Oliver ALT), adjacent mono L/R pairs are dotted so Reaper makes them stereo, and older 'vM' sessions parse.</li>
+</ul>
+<p>Releases before 3.0.0 predate this ledger; their notes are on the Releases page.</p>
+      ]]></description>
+      <pubDate>Fri, 18 Sep 2026 14:13:03 +0000</pubDate>
+      <enclosure
+        url="https://decibel-one-software-development-group.github.io/reaper-preference-setter/SiRPS-3.2.2-universal.dmg"
+        sparkle:version="3.2.2"
+        sparkle:shortVersionString="3.2.2"
+        length="19597436"
+        type="application/octet-stream"
+        sparkle:edSignature="AlRaYr7btOXSW7hmxtoV1AhISnuYiR6NrQiK9J8antd0eDRJFr9bIltOWP3B2G03GkAniXi+H5dYlp12vSM2AQ=="/>
+      <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+    </item>
   </channel>
 </rss>
