@@ -320,15 +320,26 @@ jobs:
           cp -R site/. build/gh-pages/
           sed -i '' "s|<span id=\"sitever\">[^<]*</span>|<span id=\"sitever\">${VERSION}</span>|" build/gh-pages/index.html
 
-      - name: Publish to gh-pages
+      - name: Check out gh-pages
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: peaceiris/actions-gh-pages@v4
+        uses: actions/checkout@v4
         with:
-          github_token: ${{ github.token }}
-          publish_dir: build/gh-pages
-          publish_branch: gh-pages
-          keep_files: true
-          commit_message: "appcast + DMG: SiRPS ${{ github.ref_name }}"
+          ref: gh-pages
+          path: build/gh-pages-branch
+          fetch-depth: 1
+
+      - name: Publish to gh-pages (newest 5 releases)
+        # Replaces peaceiris/actions-gh-pages with keep_files: true, which kept
+        # every DMG ever shipped — SiMONITOR's site reached 1,139 MB, past
+        # GitHub's 1 GB limit for a published Pages site. The script copies this
+        # release in, then cuts appcast.xml to the newest 5 entries and removes
+        # the downloads only a dropped entry named. The landing page, the icon
+        # and the -latest alias were never in the appcast, so they are never
+        # touched. Same script the rest of the suite uses.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python3 scripts/publish-gh-pages.py build/gh-pages build/gh-pages-branch \
+            --keep 5 --message "appcast + DMG: SiRPS ${{ github.ref_name }}"
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
