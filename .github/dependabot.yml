@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # GitHub Actions: third-party actions are pinned to commit SHAs; this opens one
+  # grouped pull request a month when any of them (or actions/*) has a newer
+  # release, so the pins never go stale. Merging is Simon's call.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI actions"

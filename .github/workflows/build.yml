@@ -52,7 +52,7 @@ jobs:
           echo "release notes present ($(wc -l < "$NOTES") lines)"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           name: SiRPS ${{ github.ref_name }}
           draft: true
@@ -347,7 +347,7 @@ jobs:
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: true
           files: |
@@ -397,7 +397,7 @@ jobs:
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: true
           files: |
