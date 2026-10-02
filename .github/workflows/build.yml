@@ -75,7 +75,7 @@ jobs:
     # 3.12.10 is the last 3.12 with a macOS installer (3.12 is security-fix
     # only from 3.12.11 on, source-only). Move to a 3.13.x installer when this
     # needs updating.
-    runs-on: macos-14
+    runs-on: macos-15
 
     env:
       PY_VERSION: "3.12.10"
