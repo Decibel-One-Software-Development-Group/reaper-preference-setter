@@ -83,6 +83,13 @@ jobs:
       SPARKLE_VERSION: "2.9.6"
 
     steps:
+      # Named, like the runner: the image's default Xcode moves. If this one is
+      # gone the job stops here, before anything is built or signed.
+      - name: Select Xcode 16.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app
+          xcodebuild -version
+
       - uses: actions/checkout@v4
 
       - name: Resolve version + DMG name
@@ -356,7 +363,7 @@ jobs:
   build_windows:
     needs: create_release
     if: ${{ !cancelled() && (needs.create_release.result == 'success' || needs.create_release.result == 'skipped') }}
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
 
     steps:
       - uses: actions/checkout@v4
