@@ -9,6 +9,7 @@ Tab 2 — DiGiCo → Reaper CSV: generate a single-column track-name CSV from a
 """
 
 import os
+import platform
 import re
 import shutil
 import ssl
@@ -17,6 +18,7 @@ import sys
 import threading
 import urllib.request
 import webbrowser
+from urllib.parse import urlencode
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -344,7 +346,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.2.3"
+APP_VERSION = "3.2.4"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -352,6 +354,29 @@ APPCAST_URL = ("https://decibel-one-software-development-group.github.io"
                "/reaper-preference-setter/appcast.xml")
 DOWNLOADS_URL = ("https://decibel-one-software-development-group.github.io"
                  "/reaper-preference-setter/")
+
+# Help > Send Feedback…: the Hopper's form on Decibel One's sign-in site, opened
+# in the browser already filled in with the app and version. The first report
+# from a browser confirms an email address with a six-digit code.
+FEEDBACK_URL = "https://identity.decibelonesoftware.com/feedback"
+
+
+def os_label():
+    """What the report's details line says about the computer."""
+    if sys.platform == "darwin":
+        version = platform.mac_ver()[0]
+        return f"macOS {version}" if version else "macOS"
+    if sys.platform == "win32":
+        build = sys.getwindowsversion().build
+        # Windows 11 still calls itself release "10"; the build number tells them apart.
+        name = "11" if build >= 22000 else platform.release()
+        return f"Windows {name} (build {build})"
+    return platform.platform()
+
+
+def feedback_url():
+    return FEEDBACK_URL + "?" + urlencode(
+        {"app": "sirps", "version": APP_VERSION, "os": os_label()})
 
 # REAPER's "Default save-as wildcard pattern" (Preferences / Project). Its Save
 # New Project dialog opens on this, resolved. The wildcards are REAPER's own and
@@ -2225,11 +2250,18 @@ class App:
             app_menu.add_separator()
             app_menu.add_command(label="Check for Updates…",
                                  command=self._check_updates)
+            # A menu named "help" is the Mac's own Help menu.
+            help_menu = tk.Menu(menubar, name="help", tearoff=0)
+            menubar.add_cascade(label="Help", menu=help_menu)
+            help_menu.add_command(label="Send Feedback…",
+                                  command=self._send_feedback)
         else:
             help_menu = tk.Menu(menubar, tearoff=0)
             menubar.add_cascade(label="Help", menu=help_menu)
             help_menu.add_command(label="Check for Updates…",
                                   command=self._check_updates)
+            help_menu.add_command(label="Send Feedback…",
+                                  command=self._send_feedback)
             help_menu.add_separator()
             help_menu.add_command(label="About SiRPS", command=self._about)
 
@@ -2241,6 +2273,9 @@ class App:
             f"SiRPS {APP_VERSION}\n"
             "REAPER preferences and DiGiCo session track lists.\n\n"
             "Decibel One")
+
+    def _send_feedback(self):
+        webbrowser.open(feedback_url())
 
     def _check_updates(self):
         # Off the UI thread: a slow or unreachable feed would otherwise freeze
