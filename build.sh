@@ -44,6 +44,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
 
     APP="dist/SiRPS.app"
     lipo -info "${APP}/Contents/MacOS/SiRPS"
+    # The .d1license type (Decibel One license): opened from Finder, SiRPS installs it.
+    /usr/libexec/PlistBuddy -c "Merge license-type.plist" "${APP}/Contents/Info.plist"
 
     echo ""
     echo "Build complete!"

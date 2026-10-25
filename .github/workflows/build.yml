@@ -183,6 +183,9 @@ jobs:
           done
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
+          # The .d1license type (Decibel One license): opened from Finder, SiRPS installs it.
+          /usr/libexec/PlistBuddy -c "Merge license-type.plist" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :UTImportedTypeDeclarations:0:UTTypeIdentifier" "$PLIST"
 
       - name: Import Apple Certificate
         run: |

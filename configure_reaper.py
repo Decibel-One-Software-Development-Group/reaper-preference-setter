@@ -34,6 +34,11 @@ try:
 except ImportError:
     DND_AVAILABLE = False
 
+# Decibel One license (decibel_license.py and license_ui.py are copies from the
+# workspace's DecibelLicense, made by its Scripts/vendor-into.sh --python; never
+# edit them here). Nothing ever locks: the license only decides what About says.
+import license_ui
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REAPER ini utilities
@@ -346,7 +351,7 @@ def check_reaper_running():
 
 # Single source of truth for the version. CI rewrites this line to match the
 # tag before building, so a release can't report a stale number.
-APP_VERSION = "3.2.4"
+APP_VERSION = "3.3.0"
 
 # Sparkle-format appcast on gh-pages, beside the DMG it points at. A GitHub
 # release can't serve this: there is no stable URL for "the newest build".
@@ -2235,6 +2240,8 @@ class App:
         notebook.add(PreferencesTab(notebook), text="Reaper Preferences")
         notebook.add(DigicoTab(notebook), text="DiGiCo → Reaper CSV")
 
+        # This machine's license; also takes a .d1license opened from Finder.
+        license_ui.start("sirps", "SiRPS", APP_VERSION, self.root)
         self._build_menu()
 
     def _build_menu(self):
@@ -2247,6 +2254,7 @@ class App:
             app_menu = tk.Menu(menubar, name="apple")
             menubar.add_cascade(menu=app_menu)
             app_menu.add_command(label="About SiRPS", command=self._about)
+            app_menu.add_command(label="License…", command=self._license)
             app_menu.add_separator()
             app_menu.add_command(label="Check for Updates…",
                                  command=self._check_updates)
@@ -2263,6 +2271,7 @@ class App:
             help_menu.add_command(label="Send Feedback…",
                                   command=self._send_feedback)
             help_menu.add_separator()
+            help_menu.add_command(label="License…", command=self._license)
             help_menu.add_command(label="About SiRPS", command=self._about)
 
         self.root.config(menu=menubar)
@@ -2272,7 +2281,11 @@ class App:
             "About SiRPS",
             f"SiRPS {APP_VERSION}\n"
             "REAPER preferences and DiGiCo session track lists.\n\n"
+            f"{license_ui.about_text()}\n\n"
             "Decibel One")
+
+    def _license(self):
+        license_ui.present(self.root)
 
     def _send_feedback(self):
         webbrowser.open(feedback_url())
