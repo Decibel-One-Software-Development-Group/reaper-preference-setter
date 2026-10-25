@@ -1,4 +1,4 @@
-# COPIED from DecibelLicense (c7ada7f 2026-10-24) by Scripts/vendor-into.sh — do not edit here.
+# COPIED from DecibelLicense (fc8f7eb 2026-10-25) by Scripts/vendor-into.sh — do not edit here.
 """The app side of Decibel One's license for SiRPS (tkinter): the machine's one license file,
 the License window, and what the app calls. The Python twin of Swift/LicenseStore.swift,
 LicenseView.swift and DecibelLicenseUI.swift: same file, same words, same behaviour. The

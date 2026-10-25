@@ -1,4 +1,4 @@
-# COPIED from DecibelLicense (c7ada7f 2026-10-24) by Scripts/vendor-into.sh — do not edit here.
+# COPIED from DecibelLicense (fc8f7eb 2026-10-25) by Scripts/vendor-into.sh — do not edit here.
 """Reads a Decibel One license file (FORMAT.md) with nothing but the standard library.
 
 SiRPS carries this file. The Ed25519 check is RFC 8032's own reference algorithm, so the
@@ -123,10 +123,12 @@ def verify(public, message, signature):
 
 # --- The license ---------------------------------------------------------------------------
 
-# Keys a reader accepts: id -> (public key, is a test key). The production key is added
-# when it is made on the droplet; test keys pass only when allow_test_keys is set.
+# Keys a reader accepts: id -> (public key, is a test key). prod-2026 was made on the droplet
+# on 2026-10-25 (its secret is only in DOI's settings there); test keys pass only when
+# allow_test_keys is set.
 KEYS = {
     "test-2026": (base64.b64decode("voifu24gC/eG5bwRgbBswRAJjExn8TPL6L/kEi1WsBA="), True),
+    "prod-2026": (base64.b64decode("CViehpbGafV+fL5zkGybAPehYR8xnDthE5aFp4eVfrY="), False),
 }
 
 PERSONAL_LINE = "Student, teacher and non-pro use"
