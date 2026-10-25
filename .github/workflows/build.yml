@@ -318,6 +318,8 @@ jobs:
 
       - name: Stage appcast + DMG + site for gh-pages
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p build/gh-pages
           cp build/appcast.xml build/gh-pages/appcast.xml
@@ -330,6 +332,9 @@ jobs:
           # The download button names this release's own file, so what people
           # save carries its version number.
           sed -i '' -E "s|SiRPS-[0-9]+(\.[0-9]+)*-universal\.dmg|SiRPS-${VERSION}-universal.dmg|g" build/gh-pages/index.html
+          # "All versions": every copy in the public downloads repo, newest first.
+          # This release joins the list when the archive job below has copied it.
+          python3 scripts/archive-version.py render --slug reaper-preference-setter build/gh-pages/index.html
 
       - name: Check out gh-pages
         if: startsWith(github.ref, 'refs/tags/v')
@@ -409,3 +414,42 @@ jobs:
           draft: true
           files: |
             ${{ env.ZIP }}
+
+  # Every version from 3.2.3 on stays downloadable (Simon, 2026-10-24). The
+  # GitHub Releases here are drafts, and gh-pages keeps only the newest 5, so
+  # both builds are copied to the public Decibel-One-Software-Development-Group/
+  # downloads repo once both jobs have passed. Then deploy-site.yml redraws the
+  # page so its "All versions" list includes this release; it shares the
+  # gh-pages-publish group, so it waits for this run to finish. DOWNLOADS_TOKEN
+  # is an org secret that can write there; without it this is a warning.
+  archive:
+    needs: [build_macos, build_windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch both builds
+        uses: actions/download-artifact@v8
+        with:
+          path: build/archive
+          merge-multiple: true
+
+      - name: Archive this version (public downloads repo)
+        env:
+          DOWNLOADS_TOKEN: ${{ secrets.DOWNLOADS_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          python3 scripts/archive-version.py upload --slug reaper-preference-setter --app SiRPS \
+            --version "$VERSION" --macos "$MIN_OS" \
+            --notes "release-notes/$VERSION.md" \
+            --file "build/archive/SiRPS-$VERSION-universal.dmg::macOS" \
+            --file "build/archive/SiRPS-$VERSION-Windows.zip::Windows"
+
+      - name: Redraw the page with this version listed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-site.yml --ref main -R "$GITHUB_REPOSITORY"

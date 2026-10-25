@@ -38,6 +38,8 @@ jobs:
           echo "Deploying site at version $VER"
 
       - name: Stage site + inject version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p build/site
           cp -R site/. build/site/
@@ -46,6 +48,8 @@ jobs:
           # The download button names this release's own file, so what people
           # save carries its version number.
           sed -i -E "s|SiRPS-[0-9]+(\.[0-9]+)*-universal\.dmg|SiRPS-${{ steps.v.outputs.version }}-universal.dmg|g" build/site/index.html
+          # "All versions": every copy in the public downloads repo, newest first (same as build.yml).
+          python3 scripts/archive-version.py render --slug reaper-preference-setter build/site/index.html
 
       - name: Publish to gh-pages (keep DMGs + appcast)
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
